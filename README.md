@@ -79,7 +79,7 @@ A missing file or key means the default.
 The crate `playbook_usage` exposes the same code the binary runs. A program that embeds it implements the `host::Host` trait (config lookup, state folder, program name, repo layout, sessions panel data) and installs it once with `host::install` before calling `entry::run`. Without an installed host the standalone one described above is used.
 
 ```toml
-playbook-usage = { git = "https://github.com/pragmatic-engineer/playbook-usage", tag = "v0.1.0" }
+playbook-usage = { git = "https://github.com/pragmatic-engineer/playbook-usage", tag = "v0.1.1" }
 ```
 
 Pin an exact tag. The API is still settling, so expect changes between minor versions until 1.0.
