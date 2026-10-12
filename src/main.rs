@@ -5,5 +5,5 @@
 //! token and cost usage, read from local session history.
 
 fn main() {
-    playbook_usage::cli::main();
+    playbook_telemetry::cli::main();
 }

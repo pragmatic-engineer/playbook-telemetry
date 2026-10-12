@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "playbook-usage"
-version = "0.1.2"
+name = "playbook-telemetry"
+version = "0.1.3"
 edition = "2021"
 description = "Token and cost usage dashboard for Claude Code sessions: a terminal view, reports and an optional telemetry receiver"
 license = "Apache-2.0"
@@ -11,7 +11,7 @@ repository = "https://github.com/pragmatic-engineer/playbook-usage"
 publish = false
 
 [lib]
-name = "playbook_usage"
+name = "playbook_telemetry"
 path = "src/lib.rs"
 
 [[bin]]
