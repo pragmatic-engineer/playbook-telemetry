@@ -14,6 +14,8 @@ It is part of the [playbook](https://github.com/pragmatic-engineer/playbook) too
 
 ## Install
 
+`pbtop` is a short alias for `playbook-usage`: the same program, installed alongside it. Anywhere this page says `playbook-usage` you can type `pbtop`.
+
 Download the binary for your platform from the [latest release](https://github.com/pragmatic-engineer/playbook-usage/releases/latest). Releases carry binaries for macOS (arm64 and x86_64), Linux (arm64 and x86_64, static musl) and Windows (x86_64), plus a `SHA256SUMS` file with build provenance attestations.
 
 ```sh
@@ -21,6 +23,8 @@ sha256sum -c --ignore-missing SHA256SUMS
 gh attestation verify playbook-usage-<version>-<target> --repo pragmatic-engineer/playbook-usage
 chmod +x playbook-usage-<version>-<target>
 mv playbook-usage-<version>-<target> ~/.local/bin/playbook-usage
+# optional short alias: download pbtop-<version>-<target> the same way, or
+ln -sf playbook-usage ~/.local/bin/pbtop
 ```
 
 Or build from source with the Rust version in `rust-toolchain.toml`:
