@@ -897,3 +897,589 @@ mod tests {
         draw_with(panel, series, cursor, None, &pal())
     }
 
+    fn draw_with(
+        panel: Rect,
+        series: &[DayPoint],
+        cursor: Option<usize>,
+        stack: Option<&Slots>,
+        pal: &Palette,
+    ) -> (Plot, Buffer) {
+        let plot = Plot::new(panel, series, Metric::Cost);
+        let mut buf = Buffer::empty(panel);
+        let view = View {
+            fill: pal.cpu,
+            stack,
+            cursor,
+            today: series.last().map_or(0, |d| d.day),
+        };
+        render(&mut buf, &plot, series, &view, pal);
+        (plot, buf)
+    }
+
+    fn row(buf: &Buffer, y: u16) -> String {
+        (buf.area.x..buf.area.x + buf.area.width)
+            .map(|x| buf[(x, y)].symbol())
+            .collect()
+    }
+
+    fn screen(buf: &Buffer) -> String {
+        (buf.area.y..buf.area.y + buf.area.height)
+            .map(|y| row(buf, y))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn rows_keep_the_plot_at_least_three_tall_and_drop_rows_in_order() {
+        let r = |h, w| Rows::for_height(h, w);
+        assert_eq!(
+            r(9, true),
+            Rows {
+                stats: true,
+                readout: true,
+                weekdays: true,
+                dates: true,
+                plot: 5
+            }
+        );
+        assert_eq!(
+            r(8, true),
+            Rows {
+                stats: true,
+                readout: true,
+                weekdays: false,
+                dates: true,
+                plot: 5
+            }
+        );
+        assert_eq!(r(7, true).plot, 4);
+        assert_eq!(
+            r(6, false),
+            Rows {
+                stats: true,
+                readout: true,
+                weekdays: false,
+                dates: true,
+                plot: 3
+            }
+        );
+        assert_eq!(
+            r(5, false),
+            Rows {
+                stats: false,
+                readout: true,
+                weekdays: false,
+                dates: true,
+                plot: 3
+            }
+        );
+        assert_eq!(
+            r(4, false),
+            Rows {
+                stats: false,
+                readout: false,
+                weekdays: false,
+                dates: true,
+                plot: 3
+            }
+        );
+        assert_eq!(
+            r(3, false),
+            Rows {
+                stats: false,
+                readout: false,
+                weekdays: false,
+                dates: false,
+                plot: 3
+            }
+        );
+        assert_eq!(r(1, false).plot, 1);
+        assert_eq!(r(0, true).plot, 0);
+    }
+
+    #[test]
+    fn bars_share_the_plot_so_the_chart_fills_its_width() {
+        // 38 inner columns less a 6 column axis gutter leaves 32.
+        let g = |days| Geometry::new(Rect::new(0, 0, 40, 10), days, 4);
+        let widths = |g: &Geometry| g.cells.iter().map(|c| c.1).collect::<Vec<_>>();
+        let thirty = g(30);
+        assert_eq!((thirty.per, thirty.bars()), (1, 30));
+        assert_eq!(widths(&thirty).iter().sum::<u16>(), 32);
+        assert!(widths(&thirty).iter().all(|w| (1..=2).contains(w)));
+        let seven = g(7);
+        assert_eq!(widths(&seven).iter().sum::<u16>(), 32);
+        assert!(widths(&seven).iter().all(|w| (4..=5).contains(w)));
+        assert_eq!(seven.bar_width(0), seven.cells[0].1 - 1, "a gap of one");
+        assert_eq!(thirty.bar_width(0), 1, "no gap at one column");
+        // A few days get a fixed width and do not stretch into slabs.
+        let one = g(1);
+        assert_eq!(one.cells, vec![(0, MAX_CELL as u16)]);
+        assert_eq!(one.bar_width(0), MAX_CELL as u16 - 1);
+        // Bars never overlap and never leave the plot.
+        for days in 1..200 {
+            let g = g(days);
+            let mut end = 0;
+            for (from, w) in &g.cells {
+                assert!(*from >= end && from + w <= 32, "{days}");
+                end = from + w;
+            }
+        }
+        // More days than columns are added up, so nothing is cut off.
+        let ninety = g(90);
+        assert_eq!((ninety.per, ninety.bars()), (3, 30));
+        let year = g(400);
+        assert_eq!((year.per, year.bars()), (13, 31));
+        assert_eq!(g(0).bars(), 0);
+    }
+
+    #[test]
+    fn buckets_add_up_days_cost_tokens_messages_and_models() {
+        let mut s = series(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        s[1].models.push(("claude-haiku-5".to_string(), 0.5));
+        let b = bars(&s, 2);
+        assert_eq!(b.len(), 3);
+        assert_eq!((b[0].first, b[0].last, b[0].cost), (FIRST, FIRST + 1, 3.0));
+        assert_eq!(b[0].messages, 2);
+        assert_eq!(b[0].tokens, 3_000);
+        assert_eq!(b[0].models.len(), 2);
+        assert_eq!(
+            (b[2].first, b[2].last, b[2].days()),
+            (FIRST + 4, FIRST + 4, 1)
+        );
+        assert_eq!(b[0].top_model().map(|(n, _)| n), Some("claude-opus-5"));
+        let total: f64 = b.iter().map(|x| x.cost).sum();
+        assert!((total - 15.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_y_axis_labels_the_bottom_middle_and_top_with_round_values() {
+        let s = series(&[1.0, 4.1, 0.5]);
+        let (plot, buf) = draw(Rect::new(0, 0, 40, 12), &s, None);
+        let p = plot.geo.plot;
+        assert_eq!(plot.axis.max, 5.0);
+        let label = |y: u16| {
+            row(&buf, y)
+                .chars()
+                .skip(1)
+                .take(usize::from(p.x - 2))
+                .collect::<String>()
+        };
+        assert_eq!(label(p.y).trim(), "$5");
+        assert_eq!(label(p.y + p.height / 2).trim(), "$2.5");
+        assert_eq!(label(p.y + p.height - 1).trim(), "$0");
+        // The axis line is a tick at each label and a bar between them.
+        let axis_x = p.x - 1;
+        assert_eq!(buf[(axis_x, p.y)].symbol(), "\u{2524}");
+        assert_eq!(buf[(axis_x, p.y + 1)].symbol(), "\u{2502}");
+    }
+
+    #[test]
+    fn the_peak_bar_reaches_the_scale_proportionally() {
+        // The top of the axis is $5, so $2.5 fills half of a four row plot.
+        let s = series(&[2.5, 5.0]);
+        let (plot, buf) = draw(Rect::new(0, 0, 40, 10), &s, None);
+        let p = plot.geo.plot;
+        let h = p.height;
+        let col = |i: usize| plot.geo.x_of(i);
+        let filled = |x: u16| {
+            (0..h)
+                .filter(|r| buf[(x, p.y + h - 1 - r)].symbol() == "\u{2588}")
+                .count()
+        };
+        assert_eq!(filled(col(1)), usize::from(h));
+        assert_eq!(filled(col(0)), usize::from(h) / 2);
+    }
+
+    #[test]
+    fn a_small_day_still_shows_a_sliver() {
+        let s = series(&[0.001, 100.0]);
+        let (plot, buf) = draw(Rect::new(0, 0, 40, 10), &s, None);
+        let p = plot.geo.plot;
+        assert_eq!(buf[(p.x, p.y + p.height - 1)].symbol(), "\u{2581}");
+    }
+
+    /// The numbers on the row under the weekdays, as (column, text) pairs.
+    fn numbers(buf: &Buffer, plot: &Plot) -> Vec<(usize, String)> {
+        let line = row(buf, plot.geo.dates_y.unwrap());
+        let mut out: Vec<(usize, String)> = Vec::new();
+        for (at, ch) in line.chars().enumerate() {
+            if ch.is_ascii_digit() {
+                match out.last_mut() {
+                    Some((from, text)) if *from + text.len() == at => text.push(ch),
+                    _ => out.push((at, ch.to_string())),
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_week_shows_the_weekday_and_the_day_number_under_it_for_every_bar() {
+        // 2026-08-05 is a Wednesday, so the week runs Wed 5 to Tue 11.
+        let s = series(&[1.0; 7]);
+        let (plot, buf) = draw(Rect::new(0, 0, 60, 14), &s, None);
+        let (w, d) = (plot.geo.weekdays_y.unwrap(), plot.geo.dates_y.unwrap());
+        assert_eq!(d, w + 1, "the number is directly under the weekday");
+        let days = row(&buf, w);
+        let nums = row(&buf, d);
+        for (name, n) in ["Wed", "Thu", "Fri", "Sat", "Sun", "Mon", "Tue"]
+            .into_iter()
+            .zip(5..)
+        {
+            let at = days.find(name).unwrap();
+            assert_eq!(nums[at..].split_whitespace().next(), Some(&*n.to_string()));
+        }
+        assert!(!nums.contains("2026") && !nums.contains("08-"), "{nums}");
+    }
+
+    #[test]
+    fn a_month_in_a_narrow_panel_shows_fewer_numbers_and_never_a_date() {
+        for width in [40, 50, 60, 100] {
+            let s = series(&vec![1.0; 31]);
+            let (plot, buf) = draw(Rect::new(0, 0, width, 12), &s, None);
+            assert_eq!(plot.geo.per, 1, "{width}");
+            let nums = numbers(&buf, &plot);
+            let text: Vec<&str> = nums.iter().map(|(_, t)| t.as_str()).collect();
+            // 31 days from Aug 5: the first is 5 and the last is Sep 4.
+            assert_eq!(text.first(), Some(&"5"), "{width}: {text:?}");
+            assert_eq!(text.last(), Some(&"4"), "{width}: {text:?}");
+            assert!(text.iter().all(|t| t.len() <= 2), "{width}: {text:?}");
+            // A column stays free between two numbers.
+            assert!(
+                nums.windows(2).all(|w| w[0].0 + w[0].1.len() < w[1].0),
+                "{width}: {nums:?}"
+            );
+            let line = row(&buf, plot.geo.dates_y.unwrap());
+            assert!(!line.contains("2026") && !line.contains("08-"), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_wide_panel_shows_every_day_number_of_a_month() {
+        let s = series(&vec![1.0; 31]);
+        let (plot, buf) = draw(Rect::new(0, 0, 120, 12), &s, None);
+        assert_eq!(numbers(&buf, &plot).len(), 31);
+    }
+
+    #[test]
+    fn bars_that_hold_several_days_keep_short_date_labels() {
+        let s = series(&vec![1.0; 90]);
+        let (plot, buf) = draw(Rect::new(0, 0, 60, 12), &s, None);
+        assert!(plot.geo.per > 1);
+        let dates = row(&buf, plot.geo.dates_y.unwrap());
+        assert!(dates.contains("08-05"), "{dates}");
+    }
+
+    #[test]
+    fn weekday_ticks_follow_the_day_and_widen_with_the_room() {
+        // 2026-08-05 is a Wednesday.
+        let s = series(&[1.0; 16]);
+        let (plot, buf) = draw(Rect::new(0, 0, 40, 14), &s, None);
+        let y = plot.geo.weekdays_y.expect("a tall panel has a weekday row");
+        let letters: String = row(&buf, y)
+            .chars()
+            .skip(usize::from(plot.geo.plot.x))
+            .filter(|c| !c.is_whitespace())
+            .take(7)
+            .collect();
+        assert_eq!(letters, "WTFSSMT");
+        // A month in the same panel is too crowded for any weekday row.
+        let month = series(&[1.0; 30]);
+        let (plot, _) = draw(Rect::new(0, 0, 40, 14), &month, None);
+        assert_eq!(plot.geo.weekdays_y, None);
+        let week = series(&[1.0; 7]);
+        let (plot, buf) = draw(Rect::new(0, 0, 40, 14), &week, None);
+        let y = plot.geo.weekdays_y.unwrap();
+        let names: Vec<String> = row(&buf, y)
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        assert_eq!(names, ["Wed", "Thu", "Fri", "Sat", "Sun", "Mon", "Tue"]);
+        // A short panel has no weekday row.
+        let (plot, _) = draw(Rect::new(0, 0, 40, 9), &week, None);
+        assert_eq!(plot.geo.weekdays_y, None);
+    }
+
+    #[test]
+    fn a_week_of_bars_fills_the_plot_of_a_wide_panel() {
+        // 118 inner columns less a 6 column gutter leaves 112 for seven bars.
+        let g = Geometry::new(Rect::new(0, 0, 120, 12), 7, 4);
+        assert_eq!(g.cells.iter().map(|c| c.1).sum::<u16>(), 112);
+        assert!(g.span() >= 112 - 1, "the last bar reaches the plot edge");
+    }
+
+    #[test]
+    fn y_axis_labels_keep_a_blank_column_from_the_box() {
+        let s = series(&[1.0, 2.0, 3.0]);
+        let (plot, buf) = draw(Rect::new(0, 0, 40, 12), &s, None);
+        let p = plot.geo.plot;
+        for y in [p.y, p.y + p.height - 1] {
+            let line = row(&buf, y);
+            let label_start = line.chars().position(|c| c == '$').expect("a label");
+            assert!(label_start >= 2, "{line}");
+            assert_eq!(buf[(plot.geo.inner.x, y)].symbol(), " ", "{line}");
+        }
+    }
+
+    #[test]
+    fn today_and_the_peak_day_are_marked_in_the_weekday_row() {
+        let mut costs = vec![1.0; 7];
+        costs[2] = 9.0;
+        let s = series(&costs);
+        let (plot, buf) = draw(Rect::new(0, 0, 40, 14), &s, None);
+        let y = plot.geo.weekdays_y.unwrap();
+        let at = |i: usize| &buf[(plot.geo.x_of(i), y)];
+        let pal = pal();
+        assert_eq!(at(6).fg, pal.color(pal.hi), "today");
+        assert!(at(6).modifier.contains(Modifier::UNDERLINED));
+        assert_eq!(at(2).fg, pal.color(pal.warn), "peak");
+        assert_ne!(at(3).fg, pal.color(pal.warn));
+    }
+
+    #[test]
+    fn the_cursor_bar_is_bright_and_its_readout_names_the_day() {
+        let s = series(&[1.0, 2.0, 3.0]);
+        let (plot, buf) = draw(Rect::new(0, 0, 40, 12), &s, Some(1));
+        let p = plot.geo.plot;
+        let pal = pal();
+        let bottom = p.y + p.height - 1;
+        assert_eq!(buf[(plot.geo.x_of(1), bottom)].fg, pal.color(pal.title));
+        assert_ne!(buf[(p.x, bottom)].fg, pal.color(pal.title));
+        let readout = row(&buf, plot.geo.readout_y.unwrap());
+        assert!(readout.contains("Thu 2026-08-06"), "{readout}");
+        assert!(readout.contains("$2.00"), "{readout}");
+        assert!(readout.contains("1 msgs"), "{readout}");
+        // Without a cursor the readout shows the newest day, today.
+        let (plot, buf) = draw(Rect::new(0, 0, 40, 12), &s, None);
+        let readout = row(&buf, plot.geo.readout_y.unwrap());
+        assert!(readout.contains("Fri 2026-08-07 today"), "{readout}");
+    }
+
+    #[test]
+    fn the_readout_drops_parts_that_do_not_fit() {
+        let s = series(&[1.0, 2.0]);
+        let plot = Plot::new(Rect::new(0, 0, 40, 12), &s, Metric::Cost);
+        let bar = &plot.bars[1];
+        let full = readout(&plot, bar, true, true, 120);
+        assert!(
+            full.contains("today peak") && full.contains("opus-5 100%") && full.contains("tok"),
+            "{full}"
+        );
+        let short = readout(&plot, bar, false, false, 24);
+        assert_eq!(short, "Thu 2026-08-06  $2.00");
+        assert_eq!(readout(&plot, bar, false, false, 8), "Thu 202~");
+    }
+
+    #[test]
+    fn a_token_chart_leads_with_tokens() {
+        let s = series(&[2.0]);
+        let plot = Plot::new(Rect::new(0, 0, 40, 12), &s, Metric::Tokens);
+        let line = readout(&plot, &plot.bars[0], false, false, 80);
+        assert!(line.contains("2.0K tok  $2.00"), "{line}");
+        assert!(!line.contains("opus"), "{line}");
+    }
+
+    #[test]
+    fn the_totals_line_has_total_peak_and_average_and_shrinks_to_fit() {
+        let s = series(&[1.0, 6.0, 2.0, 3.0]);
+        let plot = Plot::new(Rect::new(0, 0, 40, 12), &s, Metric::Cost);
+        assert_eq!(
+            stats(&plot, &s, FIRST + 3, 80),
+            "total $12.00  peak $6.00 on 08-06  avg $3.00/day"
+        );
+        assert_eq!(
+            stats(&plot, &s, FIRST + 3, 39),
+            "total $12.00  peak $6.00  avg $3.00/day"
+        );
+        assert_eq!(
+            stats(&plot, &s, FIRST + 3, 35),
+            "total $12.00  peak $6.00  avg $3.00"
+        );
+        assert_eq!(stats(&plot, &s, FIRST + 3, 24), "total $12.00  peak $6.00");
+        assert_eq!(stats(&plot, &s, FIRST + 3, 12), "total $12.00");
+        assert_eq!(stats(&plot, &s, FIRST + 3, 6), "total~");
+    }
+
+    #[test]
+    fn the_average_counts_only_the_days_that_have_happened() {
+        let s = series(&[2.0, 4.0, 0.0, 0.0]);
+        let plot = Plot::new(Rect::new(0, 0, 40, 12), &s, Metric::Cost);
+        // Today is the second day, so the average is $6 over two days.
+        let line = stats(&plot, &s, FIRST + 1, 80);
+        assert!(line.contains("avg $3.00/day"), "{line}");
+        // Before the readout is moved it shows today, not the last day.
+        assert_eq!(plot.default_index(FIRST + 1), Some(1));
+        assert_eq!(plot.default_index(FIRST + 99), Some(3));
+    }
+
+    #[test]
+    fn the_chart_draws_at_every_size_without_panicking() {
+        let s = series(&vec![1.0; 45]);
+        for w in 0..70 {
+            for h in 0..22 {
+                let panel = Rect::new(0, 0, w, h);
+                let (plot, buf) = draw(panel, &s, Some(3));
+                if w >= 3 && h >= 3 {
+                    assert!(plot.geo.plot.height + 2 <= h, "{w}x{h}");
+                }
+                assert_eq!(buf.area, panel);
+                let _ = Plot::new(panel, &[], Metric::Tokens);
+                let _ = draw(panel, &[], None);
+            }
+        }
+    }
+
+    #[test]
+    fn a_narrow_panel_drops_the_y_axis_but_keeps_the_bars() {
+        let s = series(&[1.0, 2.0, 3.0]);
+        let (plot, buf) = draw(Rect::new(0, 0, 14, 10), &s, None);
+        assert_eq!(plot.geo.gutter, 0);
+        assert!(screen(&buf).contains('\u{2588}'));
+        assert!(!screen(&buf).contains('\u{2524}'));
+    }
+
+    #[test]
+    fn a_range_wider_than_the_plot_is_added_up_and_the_axis_follows() {
+        let s = series(&vec![1.0; 90]);
+        let plot = Plot::new(Rect::new(0, 0, 40, 12), &s, Metric::Cost);
+        assert_eq!(plot.geo.per, 3);
+        assert_eq!(plot.bars.len(), 30);
+        // Each bar holds three $1 days, so the scale tops out at $3.
+        assert_eq!(plot.axis.max, 3.0);
+        assert_eq!(plot.index_of(FIRST + 7), Some(2));
+        assert_eq!(plot.index_of(FIRST + 900), None);
+    }
+
+    #[test]
+    fn the_peak_index_is_the_tallest_bar_or_none() {
+        let s = series(&[1.0, 9.0, 2.0]);
+        assert_eq!(
+            Plot::new(Rect::new(0, 0, 40, 12), &s, Metric::Cost).peak_index(),
+            Some(1)
+        );
+        let z = series(&[0.0, 0.0]);
+        assert_eq!(
+            Plot::new(Rect::new(0, 0, 40, 12), &z, Metric::Cost).peak_index(),
+            None
+        );
+    }
+
+    /// Two models, sorted by cost, in slots 2 and 5.
+    fn slots() -> Slots {
+        let g = |key: &str, cost: f64| crate::aggregate::Group {
+            key: key.into(),
+            cost_usd: cost,
+            ..Default::default()
+        };
+        Slots::of(&[g("opus", 9.0), g("sonnet", 1.0)], &[])
+    }
+
+    fn two_models(opus: f64, sonnet: f64) -> Vec<DayPoint> {
+        vec![DayPoint {
+            day: FIRST,
+            cost_usd: opus + sonnet,
+            tokens: 1000,
+            messages: 2,
+            models: vec![("opus".to_string(), opus), ("sonnet".to_string(), sonnet)],
+        }]
+    }
+
+    #[test]
+    fn runs_split_the_height_by_cost_biggest_model_first_and_end_at_the_top() {
+        let slots = slots();
+        let bar = &bars(&two_models(2.5, 1.5), 1)[0];
+        let r = runs(bar, &slots, 32);
+        assert_eq!(
+            r,
+            vec![(slots.slot("opus"), 20), (slots.slot("sonnet"), 32)]
+        );
+        // A model with no cost has no run, and the last run reaches the top
+        // even when rounding falls short.
+        let one = &bars(&two_models(0.0, 3.0), 1)[0];
+        assert_eq!(runs(one, &slots, 9), vec![(slots.slot("sonnet"), 9)]);
+        let thirds = &bars(&two_models(1.0, 1.0), 1)[0];
+        assert_eq!(runs(thirds, &slots, 7).last().map(|r| r.1), Some(7));
+        assert!(runs(bar, &slots, 0).is_empty());
+    }
+
+    #[test]
+    fn a_stacked_bar_has_each_model_in_its_color_with_an_exact_edge() {
+        let slots = slots();
+        let pal = pal();
+        let series = two_models(2.5, 1.5);
+        let (plot, buf) = draw_with(Rect::new(0, 0, 40, 12), &series, None, Some(&slots), &pal);
+        let (p, h) = (plot.geo.plot, plot.geo.plot.height);
+        assert_eq!(plot.axis.max, 4.0, "the bar fills the plot");
+        let x = plot.geo.x_of(0);
+        let cell = |r: u16| &buf[(x, p.y + h - 1 - r)];
+        let opus = pal.color(pal.series[slots.slot("opus")]);
+        let sonnet = pal.color(pal.series[slots.slot("sonnet")]);
+        assert_ne!(opus, sonnet);
+        // 2.5 of 4 is 62.5%: the cell at that height holds the edge, with the
+        // lower model as the block and the upper one behind it.
+        let edge_row = (h * 5 / 8).min(h - 1);
+        let edge = cell(edge_row);
+        assert_eq!((edge.fg, edge.bg), (opus, sonnet), "edge cell");
+        assert!(('\u{2581}'..='\u{2587}').contains(&edge.symbol().chars().next().unwrap()));
+        assert_eq!(cell(0).fg, opus);
+        assert_eq!(cell(h - 1).fg, sonnet);
+        assert_eq!(cell(h - 1).symbol(), "\u{2588}");
+    }
+
+    #[test]
+    fn a_stacked_bar_is_as_tall_as_the_plain_one() {
+        let series = two_models(2.5, 1.0);
+        let slots = slots();
+        let height = |buf: &Buffer, plot: &Plot| {
+            let x = plot.geo.x_of(0);
+            let p = plot.geo.plot;
+            (p.y..p.y + p.height)
+                .filter(|y| buf[(x, *y)].symbol() != " " && buf[(x, *y)].symbol() != "\u{2504}")
+                .count()
+        };
+        let (plain, a) = draw_with(Rect::new(0, 0, 40, 12), &series, None, None, &pal());
+        let (stacked, b) = draw_with(Rect::new(0, 0, 40, 12), &series, None, Some(&slots), &pal());
+        assert_eq!(height(&a, &plain), height(&b, &stacked));
+    }
+
+    #[test]
+    fn without_color_the_models_are_told_apart_by_pattern() {
+        let slots = slots();
+        let mono = Theme::Mono.palette(ColorDepth::True);
+        let series = two_models(2.0, 2.0);
+        let (plot, buf) = draw_with(Rect::new(0, 0, 40, 12), &series, None, Some(&slots), &mono);
+        let (p, h) = (plot.geo.plot, plot.geo.plot.height);
+        let x = plot.geo.x_of(0);
+        let low = buf[(x, p.y + h - 1)].symbol().to_string();
+        let high = buf[(x, p.y)].symbol().to_string();
+        assert_eq!(low, PATTERNS[slots.slot("opus")].to_string());
+        assert_eq!(high, PATTERNS[slots.slot("sonnet")].to_string());
+        assert_ne!(low, high);
+        assert!(buf
+            .content()
+            .iter()
+            .all(|c| c.fg == ratatui::style::Color::Reset));
+    }
+
+    #[test]
+    fn a_stacked_chart_draws_at_every_size_without_panicking() {
+        let slots = slots();
+        let series: Vec<DayPoint> = (0..40)
+            .map(|d| DayPoint {
+                day: FIRST + d,
+                ..two_models(1.0 + (d % 5) as f64, 0.5)[0].clone()
+            })
+            .collect();
+        for w in 0..60 {
+            for h in 0..16 {
+                let _ = draw_with(
+                    Rect::new(0, 0, w, h),
+                    &series,
+                    Some(2),
+                    Some(&slots),
+                    &pal(),
+                );
+            }
+        }
+    }
+}
