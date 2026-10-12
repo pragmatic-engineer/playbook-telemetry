@@ -1,15 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Igor Santos
 // SPDX-License-Identifier: Apache-2.0
 
-//! The host used when none is installed: the usage tool as its own program.
+//! The host used when none is installed: playbook-telemetry as its own
+//! program.
 //!
-//! State goes to `$XDG_STATE_HOME/playbook-telemetry` (default
-//! `~/.local/state/playbook-telemetry`), unless a database already exists under
-//! `~/.config/playbook/usage`, which is then shared with playbook. Config is
-//! an optional flat JSON object of dotted keys in
-//! `$XDG_CONFIG_HOME/playbook-telemetry/config.json`
-//! (default `~/.config/playbook-telemetry/config.json`), for example
-//! `{"usage.theme": "default", "usage.budget.monthlyUsd": 200}`.
+//! Data is the single file `~/.config/playbook/usage.db`, shared with
+//! playbook. Settings are playbook's own (see `config`), so both tools always
+//! see the same ones.
 
 use super::host::Host;
 use super::run::Paths;
@@ -20,31 +17,6 @@ use std::path::{Path, PathBuf};
 const NAME: &str = "playbook-telemetry";
 
 pub struct Standalone;
-
-/// `$var` when `home` is the real home and the variable holds an absolute
-/// path, else `home/fallback`. A scratch home in a test never leaks into the
-/// real directories.
-fn env_dir(var: &str, home: &Path, fallback: &str) -> PathBuf {
-    match std::env::var_os(var) {
-        Some(v)
-            if !v.is_empty() && Path::new(&v).is_absolute() && home == super::util::home_dir() =>
-        {
-            PathBuf::from(v)
-        }
-        _ => home.join(fallback),
-    }
-}
-
-fn config_file(home: &Path) -> PathBuf {
-    env_dir("XDG_CONFIG_HOME", home, ".config")
-        .join(NAME)
-        .join("config.json")
-}
-
-fn lookup(text: &str, key: &str) -> Option<Value> {
-    let doc: Value = serde_json::from_str(text).ok()?;
-    doc.get(key).cloned()
-}
 
 impl Host for Standalone {
     fn program(&self) -> &str {
@@ -73,16 +45,11 @@ impl Host for Standalone {
     }
 
     fn config_value(&self, key: &str, home: &Path) -> Option<Value> {
-        let text = std::fs::read_to_string(config_file(home)).ok()?;
-        lookup(&text, key)
+        super::config::resolve(home, key)
     }
 
     fn state_dir_from(&self, home: &Path) -> PathBuf {
-        let shared = home.join(".config/playbook/usage");
-        if shared.join("usage.db").is_file() {
-            return shared;
-        }
-        env_dir("XDG_STATE_HOME", home, ".local/state").join(NAME)
+        super::config::root(home)
     }
 
     fn state_dir(&self) -> PathBuf {
@@ -107,26 +74,11 @@ mod tests {
     }
 
     #[test]
-    fn a_key_is_read_from_the_flat_object() {
-        let text = r#"{"usage.theme":"default","usage.budget.monthlyUsd":200}"#;
-        assert_eq!(lookup(text, "usage.theme"), Some(Value::from("default")));
-        assert_eq!(
-            lookup(text, "usage.budget.monthlyUsd"),
-            Some(Value::from(200))
-        );
-        assert_eq!(lookup(text, "usage.missing"), None);
-        assert_eq!(lookup("not json", "usage.theme"), None);
-    }
-
-    #[test]
-    fn state_falls_back_to_the_xdg_default_without_a_shared_database() {
+    fn data_lives_next_to_playbooks_own_files() {
         let home = crate::util::scratch_dir("standalone-state");
-        std::fs::create_dir_all(&home).unwrap();
-        let dir = Standalone.state_dir_from(&home);
-        assert!(dir.ends_with("playbook-telemetry"), "{dir:?}");
-        let shared = home.join(".config/playbook/usage");
-        std::fs::create_dir_all(&shared).unwrap();
-        std::fs::write(shared.join("usage.db"), b"").unwrap();
-        assert_eq!(Standalone.state_dir_from(&home), shared);
+        assert_eq!(
+            Standalone.state_dir_from(&home),
+            home.join(".config").join("playbook")
+        );
     }
 }
