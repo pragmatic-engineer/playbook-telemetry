@@ -16,15 +16,12 @@ It is part of the [playbook](https://github.com/pragmatic-engineer/playbook) too
 
 `pbtop` is a short alias for `playbook-telemetry`: the same program, installed alongside it. Anywhere this page says `playbook-telemetry` you can type `pbtop`.
 
-Download the binary for your platform from the [latest release](https://github.com/pragmatic-engineer/playbook-telemetry/releases/latest). Releases carry binaries for macOS (arm64 and x86_64), Linux (arm64 and x86_64, static musl) and Windows (x86_64), plus a `SHA256SUMS` file with build provenance attestations.
+Download the archive for your platform from the [latest release](https://github.com/pragmatic-engineer/playbook-telemetry/releases/latest). Releases carry `playbook-telemetry-<version>-<target>.tar.gz` for macOS (arm64 and x86_64), Linux (arm64 and x86_64, static musl) and Windows (x86_64), each holding both `playbook-telemetry` and `pbtop`, plus a `SHA256SUMS` file with build provenance attestations.
 
 ```sh
 sha256sum -c --ignore-missing SHA256SUMS
-gh attestation verify playbook-telemetry-<version>-<target> --repo pragmatic-engineer/playbook-telemetry
-chmod +x playbook-telemetry-<version>-<target>
-mv playbook-telemetry-<version>-<target> ~/.local/bin/playbook-telemetry
-# optional short alias: download pbtop-<version>-<target> the same way, or
-ln -sf playbook-telemetry ~/.local/bin/pbtop
+gh attestation verify playbook-telemetry-<version>-<target>.tar.gz --repo pragmatic-engineer/playbook-telemetry
+tar -xzf playbook-telemetry-<version>-<target>.tar.gz -C ~/.local/bin
 ```
 
 Or build from source with the Rust version in `rust-toolchain.toml`:

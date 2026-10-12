@@ -185,12 +185,11 @@ jobs:
           VERSION: ${{ needs.verify-version.outputs.version }}
         run: |
           set -euo pipefail
-          assets=()
-          for b in playbook-telemetry pbtop; do
-            asset="${b}-${VERSION}-${{ matrix.target }}${{ matrix.ext }}"
-            cp "target/${{ matrix.target }}/release/${b}${{ matrix.ext }}" "$asset"
-            assets+=("$asset")
-          done
+          # One archive per target holding both binaries.
+          asset="playbook-telemetry-${VERSION}-${{ matrix.target }}.tar.gz"
+          tar -czf "$asset" -C "target/${{ matrix.target }}/release" \
+            "playbook-telemetry${{ matrix.ext }}" "pbtop${{ matrix.ext }}"
+          assets=("$asset")
           # The release is created by the maintainer before this runs; see the
           # header. A missing release is a procedure error, not a build error,
           # so say so rather than failing on an opaque upload error.
@@ -236,15 +235,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist && cd dist
-          # Download exactly the ten binaries (two names, five targets), never a previous SHA256SUMS.
-          gh release download "${GITHUB_REF_NAME}" --pattern "playbook-telemetry-${VERSION}-*" --pattern "pbtop-${VERSION}-*" --clobber
+          # Download exactly the five archives, never a previous SHA256SUMS.
+          gh release download "${GITHUB_REF_NAME}" --pattern "playbook-telemetry-${VERSION}-*.tar.gz" --clobber
           count="$(find . -type f | wc -l | tr -d ' ')"
-          if [ "$count" -ne 10 ]; then
-            echo "::error::expected 10 artefacts, found $count. Refusing to publish a partial SHA256SUMS." >&2
+          if [ "$count" -ne 5 ]; then
+            echo "::error::expected 5 artefacts, found $count. Refusing to publish a partial SHA256SUMS." >&2
             find . -type f
             exit 1
           fi
-          shasum -a 256 playbook-telemetry-* pbtop-* > SHA256SUMS
+          shasum -a 256 playbook-telemetry-* > SHA256SUMS
           shasum -a 256 -c SHA256SUMS
           cat SHA256SUMS
           gh release upload "${GITHUB_REF_NAME}" SHA256SUMS --clobber
@@ -254,5 +253,4 @@ jobs:
         with:
           subject-path: |
             dist/playbook-telemetry-*
-            dist/pbtop-*
             dist/SHA256SUMS
