@@ -3,11 +3,20 @@
 
 [package]
 name = "playbook-usage"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
-description = "Placeholder crate for playbook-usage"
+description = "Token and cost usage dashboard for Claude Code sessions: a terminal view, reports and an optional telemetry receiver"
 license = "Apache-2.0"
+repository = "https://github.com/pragmatic-engineer/playbook-usage"
 publish = false
+
+[lib]
+name = "playbook_usage"
+path = "src/lib.rs"
+
+[[bin]]
+name = "playbook-usage"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "=4.6.6", features = ["derive"] }
@@ -21,3 +30,14 @@ serde_json = { version = "=1.0.151", features = ["preserve_order"] }
 uninlined_format_args = "warn"
 manual_let_else = "warn"
 undocumented_unsafe_blocks = "warn"
+
+[profile.release]
+opt-level = "s"
+strip = true
+lto = "fat"
+codegen-units = 1
+
+# SQLite is C code that debug builds compile with -O0. Build it optimized in
+# the dev and test profiles so tests that open a database stay fast.
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
