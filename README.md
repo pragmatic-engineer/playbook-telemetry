@@ -1,4 +1,4 @@
-# playbook-usage
+# playbook-telemetry
 
 A token and cost dashboard for Claude Code sessions. It reads the session history Claude Code already keeps on your machine, prices it, and shows it in a terminal view or as a text or JSON report. Everything stays local.
 
@@ -14,17 +14,17 @@ It is part of the [playbook](https://github.com/pragmatic-engineer/playbook) too
 
 ## Install
 
-`pbtop` is a short alias for `playbook-usage`: the same program, installed alongside it. Anywhere this page says `playbook-usage` you can type `pbtop`.
+`pbtop` is a short alias for `playbook-telemetry`: the same program, installed alongside it. Anywhere this page says `playbook-telemetry` you can type `pbtop`.
 
-Download the binary for your platform from the [latest release](https://github.com/pragmatic-engineer/playbook-usage/releases/latest). Releases carry binaries for macOS (arm64 and x86_64), Linux (arm64 and x86_64, static musl) and Windows (x86_64), plus a `SHA256SUMS` file with build provenance attestations.
+Download the binary for your platform from the [latest release](https://github.com/pragmatic-engineer/playbook-telemetry/releases/latest). Releases carry binaries for macOS (arm64 and x86_64), Linux (arm64 and x86_64, static musl) and Windows (x86_64), plus a `SHA256SUMS` file with build provenance attestations.
 
 ```sh
 sha256sum -c --ignore-missing SHA256SUMS
-gh attestation verify playbook-usage-<version>-<target> --repo pragmatic-engineer/playbook-usage
-chmod +x playbook-usage-<version>-<target>
-mv playbook-usage-<version>-<target> ~/.local/bin/playbook-usage
+gh attestation verify playbook-telemetry-<version>-<target> --repo pragmatic-engineer/playbook-telemetry
+chmod +x playbook-telemetry-<version>-<target>
+mv playbook-telemetry-<version>-<target> ~/.local/bin/playbook-telemetry
 # optional short alias: download pbtop-<version>-<target> the same way, or
-ln -sf playbook-usage ~/.local/bin/pbtop
+ln -sf playbook-telemetry ~/.local/bin/pbtop
 ```
 
 Or build from source with the Rust version in `rust-toolchain.toml`:
@@ -36,13 +36,13 @@ cargo build --release
 ## Use
 
 ```sh
-playbook-usage                 # terminal view, this week against last week
-playbook-usage --summary       # text summary and exit
-playbook-usage --json          # the same numbers as JSON
-playbook-usage --range 30d     # today, week, last-week, month, last-month, 30d, 60d, 90d, all
-playbook-usage status          # is the telemetry receiver running
-playbook-usage collect         # run the local OpenTelemetry receiver in the foreground
-playbook-usage prune --dry-run # say what old telemetry rows would be removed
+playbook-telemetry                 # terminal view, this week against last week
+playbook-telemetry --summary       # text summary and exit
+playbook-telemetry --json          # the same numbers as JSON
+playbook-telemetry --range 30d     # today, week, last-week, month, last-month, 30d, 60d, 90d, all
+playbook-telemetry status          # is the telemetry receiver running
+playbook-telemetry collect         # run the local OpenTelemetry receiver in the foreground
+playbook-telemetry prune --dry-run # say what old telemetry rows would be removed
 ```
 
 Days are UTC. Weeks start on Monday unless `usage.weekStart` says otherwise.
@@ -51,9 +51,9 @@ It finds Claude Code history in `~/.claude/projects`, or in `$CLAUDE_CONFIG_DIR/
 
 ## Where it keeps its data
 
-State is one SQLite database, `usage.db`, owner-only, in `$XDG_STATE_HOME/playbook-usage` (default `~/.local/state/playbook-usage`). If a database already exists under `~/.config/playbook/usage`, that one is used, so playbook and this tool share one store.
+State is one SQLite database, `usage.db`, owner-only, in `$XDG_STATE_HOME/playbook-telemetry` (default `~/.local/state/playbook-telemetry`). If a database already exists under `~/.config/playbook/usage`, that one is used, so playbook and this tool share one store.
 
-Optional settings go in `$XDG_CONFIG_HOME/playbook-usage/config.json` (default `~/.config/playbook-usage/config.json`), a flat object of dotted keys:
+Optional settings go in `$XDG_CONFIG_HOME/playbook-telemetry/config.json` (default `~/.config/playbook-telemetry/config.json`), a flat object of dotted keys:
 
 ```json
 {
@@ -72,14 +72,14 @@ A missing file or key means the default.
 
 ## Telemetry receiver
 
-`playbook-usage collect` listens on 127.0.0.1 only and stores API request cost and token rows, tool call timings and API errors from Claude Code's JSON telemetry. Prompts, tool content, paths, emails and user ids are never stored. The receiver checks a bearer token. Its port and token are in `collector.json` in the state folder (owner-only; `playbook-usage status` shows the port and never prints the token). To point a Claude Code session at it, set `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_LOGS_EXPORTER=otlp`, `OTEL_METRICS_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<port>` and `OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>"` for that session. Playbook's `cc` launcher does all of this for you. Without the receiver, every total still comes from the session transcripts.
+`playbook-telemetry collect` listens on 127.0.0.1 only and stores API request cost and token rows, tool call timings and API errors from Claude Code's JSON telemetry. Prompts, tool content, paths, emails and user ids are never stored. The receiver checks a bearer token. Its port and token are in `collector.json` in the state folder (owner-only; `playbook-telemetry status` shows the port and never prints the token). To point a Claude Code session at it, set `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_LOGS_EXPORTER=otlp`, `OTEL_METRICS_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<port>` and `OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>"` for that session. Playbook's `cc` launcher does all of this for you. Without the receiver, every total still comes from the session transcripts.
 
 ## Use it as a library
 
 The crate `playbook-telemetry` (library `playbook_telemetry`, published from this repository) exposes the same code the binary runs. A program that embeds it implements the `host::Host` trait (config lookup, state folder, program name, repo layout, sessions panel data) and installs it once with `host::install` before calling `entry::run`. Without an installed host the standalone one described above is used.
 
 ```toml
-playbook-telemetry = { git = "https://github.com/pragmatic-engineer/playbook-usage", tag = "v0.1.3", package = "playbook-telemetry" }
+playbook-telemetry = { git = "https://github.com/pragmatic-engineer/playbook-telemetry", tag = "v0.1.3", package = "playbook-telemetry" }
 ```
 
 Pin an exact tag. The API is still settling, so expect changes between minor versions until 1.0.

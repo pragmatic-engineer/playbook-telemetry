@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Igor Santos
 // SPDX-License-Identifier: Apache-2.0
 
-//! The command line shared by `playbook-usage` and its `pbtop` alias.
+//! The command line shared by `playbook-telemetry` and its `pbtop` alias.
 use crate::command::UsageCommand;
 use crate::entry::{interactive, run, Opts};
 use crate::run::Paths;
@@ -15,9 +15,9 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 /// prints the same numbers as JSON for scripts. Days are UTC. Ranges: today,
 /// week, last-week, month, last-month, 30d, 60d, 90d, all.
 ///
-/// Example: `playbook-usage --range today` (`pbtop` is a short alias)
+/// Example: `playbook-telemetry --range today` (`pbtop` is a short alias)
 #[derive(Parser, Debug)]
-#[command(name = "playbook-usage", version)]
+#[command(name = "playbook-telemetry", version)]
 struct Cli {
     #[command(subcommand)]
     sub: Option<UsageCommand>,
@@ -32,7 +32,7 @@ struct Cli {
     range: Option<String>,
 }
 
-/// The name this program was invoked as: `pbtop` or `playbook-usage`.
+/// The name this program was invoked as: `pbtop` or `playbook-telemetry`.
 fn invoked_name() -> &'static str {
     let name = std::env::args_os()
         .next()
@@ -42,11 +42,11 @@ fn invoked_name() -> &'static str {
                 .map(|s| s.to_string_lossy().into_owned())
         })
         .filter(|n| n == "pbtop")
-        .unwrap_or_else(|| "playbook-usage".to_string());
+        .unwrap_or_else(|| "playbook-telemetry".to_string());
     Box::leak(name.into_boxed_str())
 }
 
-/// Shared entry point of both binaries, `playbook-usage` and its `pbtop` alias.
+/// Shared entry point of both binaries, `playbook-telemetry` and its `pbtop` alias.
 pub fn main() {
     let name = invoked_name();
     let matches = Cli::command().name(name).get_matches();

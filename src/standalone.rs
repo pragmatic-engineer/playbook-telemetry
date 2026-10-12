@@ -3,12 +3,12 @@
 
 //! The host used when none is installed: the usage tool as its own program.
 //!
-//! State goes to `$XDG_STATE_HOME/playbook-usage` (default
-//! `~/.local/state/playbook-usage`), unless a database already exists under
+//! State goes to `$XDG_STATE_HOME/playbook-telemetry` (default
+//! `~/.local/state/playbook-telemetry`), unless a database already exists under
 //! `~/.config/playbook/usage`, which is then shared with playbook. Config is
 //! an optional flat JSON object of dotted keys in
-//! `$XDG_CONFIG_HOME/playbook-usage/config.json`
-//! (default `~/.config/playbook-usage/config.json`), for example
+//! `$XDG_CONFIG_HOME/playbook-telemetry/config.json`
+//! (default `~/.config/playbook-telemetry/config.json`), for example
 //! `{"usage.theme": "default", "usage.budget.monthlyUsd": 200}`.
 
 use super::host::Host;
@@ -17,7 +17,7 @@ use super::session_view::Record;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-const NAME: &str = "playbook-usage";
+const NAME: &str = "playbook-telemetry";
 
 pub struct Standalone;
 
@@ -101,9 +101,9 @@ mod tests {
     #[test]
     fn command_drops_the_usage_word() {
         let h = Standalone;
-        assert_eq!(h.command("usage --summary"), "playbook-usage --summary");
-        assert_eq!(h.command("usage"), "playbook-usage");
-        assert_eq!(h.command("usage collect"), "playbook-usage collect");
+        assert_eq!(h.command("usage --summary"), "playbook-telemetry --summary");
+        assert_eq!(h.command("usage"), "playbook-telemetry");
+        assert_eq!(h.command("usage collect"), "playbook-telemetry collect");
     }
 
     #[test]
@@ -123,7 +123,7 @@ mod tests {
         let home = crate::util::scratch_dir("standalone-state");
         std::fs::create_dir_all(&home).unwrap();
         let dir = Standalone.state_dir_from(&home);
-        assert!(dir.ends_with("playbook-usage"), "{dir:?}");
+        assert!(dir.ends_with("playbook-telemetry"), "{dir:?}");
         let shared = home.join(".config/playbook/usage");
         std::fs::create_dir_all(&shared).unwrap();
         std::fs::write(shared.join("usage.db"), b"").unwrap();
