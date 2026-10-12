@@ -890,3 +890,261 @@ mod tests {
         assert!(screen(&app, 120, 30).contains("v view: agents"));
     }
 
+    #[test]
+    fn the_help_window_fits_every_supported_size_and_names_the_panels() {
+        for (w, h) in [(80, 24), (100, 30), (160, 50)] {
+            let mut app = app_with(&[event("claude-opus-5", "alpha", 1.0)]);
+            app.help = Some(0);
+            let text = screen(&app, w, h);
+            assert!(text.contains("Navigation"), "{w}x{h}: {text}");
+            if h >= 50 {
+                // The whole table fits on a tall screen.
+                for group in [
+                    "Periods",
+                    "Views",
+                    "Sorting",
+                    "Filtering",
+                    "Refresh",
+                    "Quit",
+                ] {
+                    assert!(text.contains(group), "{w}x{h}: {text}");
+                }
+                assert!(text.contains("Spend, Projects"), "{w}x{h}");
+            }
+            assert!(text.contains("closes"), "{w}x{h}");
+            // Every line of the window is inside the screen.
+            assert_eq!(text.lines().count(), usize::from(h));
+        }
+    }
+
+    #[test]
+    fn every_help_line_fits_the_narrowest_window() {
+        for line in super::keys::help_lines() {
+            if let super::keys::HelpLine::Key {
+                shown,
+                text,
+                panels,
+            } = line
+            {
+                let width = 11 + 41 + panels.chars().count();
+                assert!(shown.chars().count() <= 10, "{shown}");
+                assert!(text.chars().count() <= 40, "{text}");
+                assert!(width <= 76, "{shown}: {width}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_footer_names_what_each_key_does_and_always_keeps_help_and_quit() {
+        let app = App::new(Range::All);
+        let wide = screen(&app, 140, 30);
+        for hint in ["m month", "w week", "d day", "a all", "h help", "q quit"] {
+            assert!(wide.contains(hint), "{hint}");
+        }
+        for width in [80, 90, 100] {
+            let text = screen(&app, width, 24);
+            assert!(text.contains("h help") && text.contains("q quit"), "{text}");
+        }
+    }
+
+    #[test]
+    fn the_footer_lists_the_keys_and_the_active_theme() {
+        let app = App::new(Range::All);
+        let text = screen(&app, 160, 30);
+        for hint in [
+            "/ filter",
+            "s/S sort",
+            "v view",
+            "\u{2190}/\u{2192} day",
+            "t theme (default)",
+        ] {
+            assert!(text.contains(hint), "{hint}");
+        }
+    }
+
+    #[test]
+    fn the_footer_shows_when_the_data_was_read_and_how_often() {
+        let app = app_with(&[]);
+        assert!(screen(&app, 150, 30).contains("updated 01:46:40 UTC, every 5s"));
+        // A short line keeps the time and drops the interval.
+        let short = screen(&app, 80, 24);
+        assert!(short.contains("updated 01:46:40 UTC"), "{short}");
+        assert!(!short.contains("every"), "{short}");
+        // A configured interval is shown.
+        let mut app = app;
+        app.refresh_every = std::time::Duration::from_secs(30);
+        assert!(screen(&app, 150, 30).contains("every 30s"));
+    }
+
+    #[test]
+    fn the_footer_names_the_telemetry_state_on_a_wide_screen_only() {
+        use crate::telemetry_status::Mode;
+        let mut app = app_with(&[]);
+        app.telemetry = Some(Mode::OffNotConfigured);
+        assert!(screen(&app, 150, 30).contains("telemetry: off (not configured)"));
+        assert!(!screen(&app, 80, 24).contains("telemetry:"));
+        app.telemetry = Some(Mode::OnRunning);
+        assert!(screen(&app, 150, 30).contains("telemetry: on, collector running"));
+    }
+
+    #[test]
+    fn a_failed_refresh_is_named_in_the_footer_and_the_data_stays() {
+        let mut app = app_with(&[event("opus", "alpha", 2.0)]);
+        app.error = Some("database is busy".into());
+        let text = screen(&app, 120, 30);
+        assert!(text.contains("refresh failed: database is busy"), "{text}");
+        assert!(text.contains("$2.00"), "the last good data stays:\n{text}");
+        assert!(!text.contains("updated"), "{text}");
+    }
+
+    #[test]
+    fn the_sessions_table_names_each_day_once_and_lists_its_sessions() {
+        let session = |id: &str, ts: i64, cost: f64| UsageEvent {
+            event_id: format!("{id}{ts}"),
+            timestamp: ts,
+            session_id: id.into(),
+            model: "claude-opus-5".into(),
+            repo: "alpha".into(),
+            cost_usd: cost,
+            ..UsageEvent::default()
+        };
+        // Today is Thursday 09-03, one day back is Wednesday 09-02.
+        let events = [
+            session("aaaaaaaa-1", NOW - 60, 1.0),
+            session("bbbbbbbb-2", NOW - 50, 2.0),
+            session("cccccccc-3", NOW - 86_400, 3.0),
+        ];
+        let live = LiveView::default();
+        let mut app = App::new(Range::All);
+        app.data = Some(Data::build(&events, live, NOW, Range::All, ""));
+        let text = screen(&app, 160, 50);
+        let ids = ["aaaaaaaa", "bbbbbbbb", "cccccccc"];
+        let rows: Vec<&str> = text
+            .lines()
+            .filter_map(|l| l.split('\u{2502}').nth(3))
+            .filter(|r| ids.iter().any(|id| r.contains(id)))
+            .collect();
+        assert_eq!(rows.len(), 3, "{text}");
+        assert!(
+            rows[0].contains("Thu 09-03") && rows[0].contains("bbbbbbbb"),
+            "{rows:?}"
+        );
+        assert!(
+            !rows[1].contains("09-03") && rows[1].contains("aaaaaaaa"),
+            "{rows:?}"
+        );
+        assert!(
+            rows[2].contains("Wed 09-02") && rows[2].contains("cccccccc"),
+            "{rows:?}"
+        );
+    }
+
+    #[test]
+    fn the_footer_shows_the_draft_while_editing_and_the_filter_once_set() {
+        let mut app = App::new(Range::All);
+        app.editing = true;
+        app.draft = "opus".into();
+        assert!(screen(&app, 100, 30).contains("filter: opus_"));
+        app.editing = false;
+        app.filter = "opus".into();
+        assert!(screen(&app, 100, 30).contains("filter opus"));
+    }
+
+    #[test]
+    fn the_mono_theme_draws_no_foreground_color() {
+        let mut app = app_with(&[event("claude-opus-4-1", "a/b", 1.0)]);
+        app.theme = super::super::theme::Theme::Mono;
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|f| render(f, &app)).unwrap();
+        let colored = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .filter(|c| c.fg != ratatui::style::Color::Reset)
+            .count();
+        assert_eq!(colored, 0);
+    }
+
+    #[test]
+    fn the_header_names_each_period_its_previous_one_and_their_exact_utc_dates() {
+        use crate::query::WeekStart;
+        // Thursday 2026-09-03 01:46:40 UTC, so 1h 46m into the day.
+        for (range, want) in [
+            (
+                Range::Today,
+                "today Sep 3 until 01:46  vs  yesterday Sep 2 until 01:46  (same span 1h 46m)",
+            ),
+            (
+                Range::ThisWeek(WeekStart::Monday),
+                "this week Aug 31 to Sep 3 until 01:46  vs  last week Aug 24 to Aug 27 until 01:46  (same span 3d 1h)",
+            ),
+            (
+                Range::CurrentMonth,
+                "this month Sep 1 to Sep 3 until 01:46  vs  last month Aug 1 to Aug 3 until 01:46  (same span 2d 1h)",
+            ),
+            // The other ranges have no previous period.
+            (Range::LastWeek(WeekStart::Monday), "last week Aug 24 to Aug 30, 2026"),
+            (Range::LastMonth, "last month Aug 1 to Aug 31, 2026"),
+            (Range::LastDays(30), "last 30 days Aug 5 to Sep 3, 2026"),
+            (Range::All, "all time"),
+        ] {
+            let text = screen(&app_for(range, &[]), 120, 30);
+            assert!(text.contains(want), "{want}:\n{text}");
+            assert!(text.contains("UTC"), "{text}");
+        }
+        // A week says which day the weeks start on, and moves with it.
+        let sunday = Range::ThisWeek(WeekStart::Sunday);
+        let text = screen(&app_for(sunday, &[]), 120, 30);
+        assert!(text.contains("UTC, weeks start Sun"), "{text}");
+        assert!(
+            text.contains("this week Aug 30 to Sep 3")
+                && text.contains("last week Aug 23 to Aug 27"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_context_line_gives_up_detail_before_the_same_span_note() {
+        let c = Data::build(&[], LiveView::default(), NOW, Range::Today, "")
+            .comparison
+            .expect("today compares");
+        let mut lengths = Vec::new();
+        for room in [110, 80, 50, 40] {
+            let (a, b) = context(&c, room);
+            let len = a.chars().count() + b.chars().count();
+            assert!(len <= room || room < 45, "{room}: {a}{b}");
+            assert!(b.contains("same"), "{room}: {b}");
+            lengths.push(len);
+        }
+        assert!(lengths.windows(2).all(|w| w[0] >= w[1]), "{lengths:?}");
+    }
+
+    #[test]
+    fn the_footer_drops_the_least_important_hints_first_on_a_narrow_screen() {
+        let app = App::new(Range::All);
+        let wide = screen(&app, 160, 30);
+        let narrow = screen(&app, 80, 24);
+        assert!(wide.contains("t theme"), "{wide}");
+        assert!(!narrow.contains("t theme"), "{narrow}");
+        for kept in ["m month", "v view", "/ filter", "h help", "q quit"] {
+            assert!(narrow.contains(kept), "{kept}:\n{narrow}");
+        }
+    }
+
+    #[test]
+    fn the_unpriced_count_shows_in_the_header_border() {
+        let mut e = event("mystery", "alpha", 0.0);
+        e.unpriced = true;
+        let app = app_with(&[e]);
+        assert!(screen(&app, 80, 24).contains("1 unpriced"));
+        assert!(screen(&app, 120, 30).contains("1 unpriced"));
+    }
+
+    #[test]
+    fn a_resize_redraws_to_the_new_size() {
+        let app = App::new(Range::All);
+        assert!(screen(&app, 60, 20).contains("Terminal too small"));
+        assert!(!screen(&app, 100, 30).contains("Terminal too small"));
+    }
+}
