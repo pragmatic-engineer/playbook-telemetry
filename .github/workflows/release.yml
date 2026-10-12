@@ -158,21 +158,25 @@ jobs:
 
       - name: Ad-hoc sign the macOS binaries
         if: runner.os == 'macOS'
-        run: codesign --sign - --force target/${{ matrix.target }}/release/playbook-usage
+        run: for b in playbook-usage pbtop; do codesign --sign - --force target/${{ matrix.target }}/release/$b; done
 
       - name: Confirm the macOS signature is adhoc
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
-          codesign -dvv target/${{ matrix.target }}/release/playbook-usage 2>&1 | tee /tmp/cs.txt
-          grep -q 'Signature=adhoc' /tmp/cs.txt
+          for b in playbook-usage pbtop; do
+            codesign -dvv target/${{ matrix.target }}/release/$b 2>&1 | tee /tmp/cs.txt
+            grep -q 'Signature=adhoc' /tmp/cs.txt
+          done
 
       - name: Confirm the linux binaries are static
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          file -b target/${{ matrix.target }}/release/playbook-usage | tee /tmp/f.txt
-          grep -qE 'static-pie linked|statically linked' /tmp/f.txt
+          for b in playbook-usage pbtop; do
+            file -b target/${{ matrix.target }}/release/$b | tee /tmp/f.txt
+            grep -qE 'static-pie linked|statically linked' /tmp/f.txt
+          done
 
       - name: Name and upload the artefact
         shell: bash
@@ -181,8 +185,12 @@ jobs:
           VERSION: ${{ needs.verify-version.outputs.version }}
         run: |
           set -euo pipefail
-          asset="playbook-usage-${VERSION}-${{ matrix.target }}${{ matrix.ext }}"
-          cp "target/${{ matrix.target }}/release/playbook-usage${{ matrix.ext }}" "$asset"
+          assets=()
+          for b in playbook-usage pbtop; do
+            asset="${b}-${VERSION}-${{ matrix.target }}${{ matrix.ext }}"
+            cp "target/${{ matrix.target }}/release/${b}${{ matrix.ext }}" "$asset"
+            assets+=("$asset")
+          done
           # The release is created by the maintainer before this runs; see the
           # header. A missing release is a procedure error, not a build error,
           # so say so rather than failing on an opaque upload error.
@@ -190,7 +198,7 @@ jobs:
             echo "::error::release ${GITHUB_REF_NAME} does not exist. Create it first with: gh release create ${GITHUB_REF_NAME} --target main" >&2
             exit 1
           }
-          gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber
+          gh release upload "${GITHUB_REF_NAME}" "${assets[@]}" --clobber
 
   checksums:
     needs: [verify-version, build]
@@ -228,15 +236,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist && cd dist
-          # Download exactly the five binaries, never a previous SHA256SUMS.
-          gh release download "${GITHUB_REF_NAME}" --pattern "playbook-usage-${VERSION}-*" --clobber
+          # Download exactly the ten binaries (two names, five targets), never a previous SHA256SUMS.
+          gh release download "${GITHUB_REF_NAME}" --pattern "playbook-usage-${VERSION}-*" --pattern "pbtop-${VERSION}-*" --clobber
           count="$(find . -type f | wc -l | tr -d ' ')"
-          if [ "$count" -ne 5 ]; then
-            echo "::error::expected 5 artefacts, found $count. Refusing to publish a partial SHA256SUMS." >&2
+          if [ "$count" -ne 10 ]; then
+            echo "::error::expected 10 artefacts, found $count. Refusing to publish a partial SHA256SUMS." >&2
             find . -type f
             exit 1
           fi
-          shasum -a 256 playbook-usage-* > SHA256SUMS
+          shasum -a 256 playbook-usage-* pbtop-* > SHA256SUMS
           shasum -a 256 -c SHA256SUMS
           cat SHA256SUMS
           gh release upload "${GITHUB_REF_NAME}" SHA256SUMS --clobber
@@ -246,4 +254,5 @@ jobs:
         with:
           subject-path: |
             dist/playbook-usage-*
+            dist/pbtop-*
             dist/SHA256SUMS
