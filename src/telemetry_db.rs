@@ -897,3 +897,215 @@ mod tests {
         }
     }
 
+    #[test]
+    fn tool_and_error_rows_dedupe_on_their_keys() {
+        let conn = mem();
+        assert_eq!(
+            insert_tool(&conn, &tool("t1", "Bash", true, 5, 1)).unwrap(),
+            1
+        );
+        assert_eq!(
+            insert_tool(&conn, &tool("t1", "Bash", true, 5, 1)).unwrap(),
+            0
+        );
+        assert_eq!(insert_error(&conn, &failure(1, 1, 1)).unwrap(), 1);
+        assert_eq!(insert_error(&conn, &failure(1, 1, 1)).unwrap(), 0);
+        assert_eq!(insert_error(&conn, &failure(2, 1, 1)).unwrap(), 1);
+    }
+
+    #[test]
+    fn tool_stats_give_calls_failures_and_latency_busiest_first() {
+        let conn = mem();
+        for t in [
+            tool("a", "Bash", true, 100, 10),
+            tool("b", "Bash", false, 300, 20),
+            tool("c", "Read", true, 10, 30),
+            tool("d", "Read", true, 10, 5_000),
+            tool("e", "", true, 1, 40),
+        ] {
+            insert_tool(&conn, &t).unwrap();
+        }
+        let stats = tool_stats(&conn, 0, 1_000).unwrap();
+        let names: Vec<&str> = stats.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["Bash", "Read", "unknown"]);
+        let bash = &stats[0];
+        assert_eq!((bash.calls, bash.failures, bash.max_ms), (2, 1, 300));
+        assert_eq!(bash.avg_ms(), 200.0);
+        assert_eq!(bash.error_rate(), 0.5);
+        assert_eq!(
+            stats[1].calls, 1,
+            "the call outside the window is not counted"
+        );
+        assert!(tool_stats(&conn, 9_000, 9_100).unwrap().is_empty());
+    }
+
+    #[test]
+    fn health_sums_requests_errors_retries_and_busy_time() {
+        let conn = mem();
+        let mut r = request("r1");
+        r.duration_ms = 1_000;
+        insert_request(&conn, &r).unwrap();
+        insert_tool(&conn, &tool("a", "Bash", false, 500, 10)).unwrap();
+        insert_error(&conn, &failure(1, 1, 10)).unwrap();
+        insert_error(&conn, &failure(2, 2, 10)).unwrap();
+        let h = health(&conn, 0, 1_000).unwrap();
+        assert_eq!((h.requests, h.errors, h.retried), (1, 2, 1));
+        assert_eq!((h.tool_calls, h.tool_failures), (1, 1));
+        assert_eq!(h.busy_ms(), 1_500);
+        assert!((h.api_error_rate() - 2.0 / 3.0).abs() < 1e-9);
+        assert_eq!(h.tool_error_rate(), 1.0);
+        assert!(!h.is_empty());
+        let none = health(&conn, 5_000, 6_000).unwrap();
+        assert!(none.is_empty());
+        assert_eq!((none.api_error_rate(), none.tool_error_rate()), (0.0, 0.0));
+    }
+
+    #[test]
+    fn health_adds_active_time_lines_commits_and_pull_requests() {
+        let conn = mem();
+        let m = |metric: &str, kind: &str, end: i64, v: f64| TelemetryMetric {
+            session_id: "s".into(),
+            metric: metric.into(),
+            kind: kind.into(),
+            start_ns: end - 1,
+            end_ns: end,
+            timestamp: end,
+            value: v,
+        };
+        for row in [
+            m("active_time", "user", 10, 30.0),
+            m("active_time", "cli", 10, 90.0),
+            m("lines_of_code", "added", 10, 40.0),
+            m("lines_of_code", "removed", 10, 10.0),
+            m("commits", "", 10, 2.0),
+            m("pull_requests", "", 10, 1.0),
+            m("active_time", "cli", 10, 5.0),
+        ] {
+            insert_metric(&conn, &row).unwrap();
+        }
+        // The same interval, session, metric and kind is one point.
+        let h = health(&conn, 0, 100).unwrap();
+        assert_eq!(h.active_ms, 120_000);
+        assert_eq!((h.lines_changed, h.commits, h.pull_requests), (50, 2, 1));
+        assert!(!h.is_empty());
+        assert!(health(&conn, 100, 200).unwrap().is_empty());
+    }
+
+    fn fill(conn: &Connection, n: i64) {
+        for i in 0..n {
+            let mut r = request(&format!("r{i}"));
+            r.timestamp = 1_000 + i;
+            insert_request(conn, &r).unwrap();
+            insert_tool(conn, &tool(&format!("t{i}"), "Bash", true, 1, 1_000 + i)).unwrap();
+            insert_error(conn, &failure(i as u64, 1, 1_000 + i)).unwrap();
+            let m = TelemetryMetric {
+                session_id: "s".into(),
+                metric: "commits".into(),
+                kind: String::new(),
+                start_ns: i,
+                end_ns: i + 1,
+                timestamp: 1_000 + i,
+                value: 1.0,
+            };
+            insert_metric(conn, &m).unwrap();
+        }
+    }
+
+    #[test]
+    fn prune_drops_rows_older_than_the_retention_in_every_table() {
+        let conn = mem();
+        fill(&conn, 10);
+        let day = 86_400;
+        // Rows are at 1000..1009; keep rows newer than now - 1 day = 1005.
+        let r = Retention {
+            days: 1,
+            max_rows: 0,
+        };
+        let dry = prune(&conn, 1_005 + day, r, true).unwrap();
+        assert_eq!(dry.total(), 20, "{dry:?}");
+        assert_eq!(
+            count_requests(&conn).unwrap(),
+            10,
+            "a dry run deletes nothing"
+        );
+        let done = prune(&conn, 1_005 + day, r, false).unwrap();
+        assert_eq!(done, dry);
+        assert_eq!(count_requests(&conn).unwrap(), 5);
+        let left: i64 = conn
+            .query_row("SELECT MIN(timestamp) FROM telemetry_metrics", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(left, 1_005);
+    }
+
+    #[test]
+    fn prune_keeps_the_newest_rows_up_to_the_row_limit_and_zero_means_no_limit() {
+        let conn = mem();
+        fill(&conn, 10);
+        let r = Retention {
+            days: 0,
+            max_rows: 4,
+        };
+        let done = prune(&conn, 5_000_000, r, false).unwrap();
+        assert_eq!(
+            (done.requests, done.tools, done.errors, done.metrics),
+            (6, 6, 6, 6)
+        );
+        let oldest: i64 = conn
+            .query_row("SELECT MIN(timestamp) FROM telemetry_requests", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(oldest, 1_006);
+        let none = Retention {
+            days: 0,
+            max_rows: 0,
+        };
+        assert_eq!(prune(&conn, 9_000_000, none, false).unwrap().total(), 0);
+        assert_eq!(count_requests(&conn).unwrap(), 4);
+    }
+
+    #[test]
+    fn prune_leaves_the_transcript_tables_alone() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE usage_events (event_id TEXT); INSERT INTO usage_events VALUES ('a');",
+        )
+        .unwrap();
+        migrate_up(&conn).unwrap();
+        prune(
+            &conn,
+            i64::MAX / 4,
+            Retention {
+                days: 1,
+                max_rows: 1,
+            },
+            false,
+        )
+        .unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM usage_events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn a_table_from_before_slice_two_gains_the_duration_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE telemetry_requests (
+                session_id TEXT NOT NULL, request_id TEXT NOT NULL, timestamp INTEGER NOT NULL,
+                model TEXT NOT NULL, effort TEXT NOT NULL DEFAULT '',
+                agent_name TEXT NOT NULL DEFAULT '', skill_name TEXT NOT NULL DEFAULT '',
+                input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+                cache_creation_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL,
+                cost_usd REAL NOT NULL, PRIMARY KEY (session_id, request_id));
+             INSERT INTO telemetry_requests VALUES ('s','r',1,'m','','','',1,1,0,0,0.5);",
+        )
+        .unwrap();
+        migrate_up(&conn).unwrap();
+        assert_eq!(health(&conn, 0, 10).unwrap().api_ms, 0);
+        insert_request(&conn, &request("r2")).unwrap();
+    }
+}
