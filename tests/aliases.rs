@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: 2026 Igor Santos
 // SPDX-License-Identifier: Apache-2.0
 
-//! `pbtop` is the same program as `playbook-usage` under a shorter name.
+//! `pbtop` is the same program as `playbook-telemetry` under a shorter name.
 
 use std::process::Command;
 
 fn run(bin: &str, arg: &str) -> String {
     let path = match bin {
-        "playbook-usage" => env!("CARGO_BIN_EXE_playbook-usage"),
+        "playbook-telemetry" => env!("CARGO_BIN_EXE_playbook-telemetry"),
         _ => env!("CARGO_BIN_EXE_pbtop"),
     };
     let out = Command::new(path).arg(arg).output().expect("spawn");
@@ -17,11 +17,11 @@ fn run(bin: &str, arg: &str) -> String {
 
 #[test]
 fn both_binaries_print_the_same_version_under_their_own_name() {
-    let full = run("playbook-usage", "--version");
+    let full = run("playbook-telemetry", "--version");
     let short = run("pbtop", "--version");
     assert_eq!(
         full.trim(),
-        format!("playbook-usage {}", env!("CARGO_PKG_VERSION"))
+        format!("playbook-telemetry {}", env!("CARGO_PKG_VERSION"))
     );
     assert_eq!(short.trim(), format!("pbtop {}", env!("CARGO_PKG_VERSION")));
 }
@@ -29,5 +29,5 @@ fn both_binaries_print_the_same_version_under_their_own_name() {
 #[test]
 fn help_shows_the_invoked_name() {
     assert!(run("pbtop", "--help").contains("Usage: pbtop"));
-    assert!(run("playbook-usage", "--help").contains("Usage: playbook-usage"));
+    assert!(run("playbook-telemetry", "--help").contains("Usage: playbook-telemetry"));
 }

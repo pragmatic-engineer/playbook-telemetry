@@ -7,7 +7,7 @@ version = "0.1.3"
 edition = "2021"
 description = "Token and cost usage dashboard for Claude Code sessions: a terminal view, reports and an optional telemetry receiver"
 license = "Apache-2.0"
-repository = "https://github.com/pragmatic-engineer/playbook-usage"
+repository = "https://github.com/pragmatic-engineer/playbook-telemetry"
 publish = false
 
 [lib]
@@ -15,7 +15,7 @@ name = "playbook_telemetry"
 path = "src/lib.rs"
 
 [[bin]]
-name = "playbook-usage"
+name = "playbook-telemetry"
 path = "src/main.rs"
 
 [[bin]]

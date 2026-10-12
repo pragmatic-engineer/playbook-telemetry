@@ -241,7 +241,7 @@ pub mod git {
 
         #[test]
         fn a_missing_directory_reads_as_none() {
-            let missing = std::env::temp_dir().join("playbook-usage-no-such-dir");
+            let missing = std::env::temp_dir().join("playbook-telemetry-no-such-dir");
             assert_eq!(output(&missing, &["--version"]), None);
         }
     }
@@ -254,7 +254,7 @@ pub(crate) fn scratch_dir(tag: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "playbook-usage-test-{}-{tag}-{n}",
+        "playbook-telemetry-test-{}-{tag}-{n}",
         std::process::id()
     ))
 }
