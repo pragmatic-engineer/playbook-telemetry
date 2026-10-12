@@ -74,7 +74,7 @@ pub fn validate(key: &str, value: &Value) -> Result<(), String> {
 
 fn warn_once(flag: &AtomicBool, message: &str) {
     if !flag.swap(true, Ordering::Relaxed) {
-        eprintln!("{message}");
+        crate::say::notice(message);
     }
 }
 

@@ -4,7 +4,7 @@
 //! The host used when none is installed: playbook-telemetry as its own
 //! program.
 //!
-//! Data is the single file `~/.config/playbook/usage.db`, shared with
+//! Data is the single file `~/.config/playbook/data/usage.db`, shared with
 //! playbook. Settings are playbook's own (see `config`), so both tools always
 //! see the same ones.
 
@@ -49,7 +49,7 @@ impl Host for Standalone {
     }
 
     fn state_dir_from(&self, home: &Path) -> PathBuf {
-        super::config::root(home)
+        super::data::data_dir(home)
     }
 
     fn state_dir(&self) -> PathBuf {
@@ -78,7 +78,7 @@ mod tests {
         let home = crate::util::scratch_dir("standalone-state");
         assert_eq!(
             Standalone.state_dir_from(&home),
-            home.join(".config").join("playbook")
+            crate::data::data_dir(&home)
         );
     }
 }

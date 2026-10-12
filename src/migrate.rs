@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! One-time move of older usage databases to the single data file,
-//! `~/.config/playbook/usage.db`.
+//! `~/.config/playbook/data/usage.db`.
 //!
-//! Older versions kept it in `~/.config/playbook/usage/usage.db` (playbook) or
+//! Older versions kept it in `~/.config/playbook/usage.db` (playbook 0.25 and
+//! playbook-telemetry 0.1.5), `~/.config/playbook/usage/usage.db` (playbook
+//! before 0.25) or
 //! in `~/.local/state/playbook-telemetry/usage.db` and its older name
 //! `playbook-usage` (the standalone tool, also under `$XDG_STATE_HOME`). On
 //! open, when the data file is missing, the larger and then newer old database
@@ -22,7 +24,12 @@ const SIDE_FILES: [&str; 2] = ["-wal", "-shm"];
 
 /// The old locations of the database for the user at `home`.
 pub fn legacy_paths(home: &Path) -> Vec<PathBuf> {
-    let mut out = vec![home.join(".config/playbook/usage/usage.db")];
+    let mut out = vec![
+        // playbook 0.25 and playbook-telemetry 0.1.5
+        home.join(".config/playbook/usage.db"),
+        // playbook before 0.25
+        home.join(".config/playbook/usage/usage.db"),
+    ];
     let mut states = Vec::new();
     if home == crate::util::home_dir() {
         if let Some(x) = std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty()) {
@@ -100,7 +107,7 @@ fn columns(conn: &Connection, schema: &str, table: &str) -> Result<Vec<String>, 
 }
 
 /// Copies every row of `old` that the data file lacks, by primary key.
-fn merge(target: &Path, old: &Path) -> Result<(), String> {
+fn merge(target: &Path, old: &Path) -> Result<u64, String> {
     // Opening the old file through the normal opener brings an older schema up
     // to date, and fails on a file that is not a database.
     let probe = crate::db::open_db(old)?;
@@ -117,9 +124,10 @@ fn merge(target: &Path, old: &Path) -> Result<(), String> {
         [old.to_string_lossy().as_ref()],
     )
     .map_err(|e| e.to_string())?;
-    let result = (|| -> Result<(), String> {
+    let result = (|| -> Result<u64, String> {
         conn.execute_batch("BEGIN IMMEDIATE")
             .map_err(|e| e.to_string())?;
+        let mut rows = 0u64;
         for table in tables(&conn)? {
             let have = columns(&conn, "legacy", &table)?;
             let cols: Vec<String> = columns(&conn, "main", &table)?
@@ -131,15 +139,18 @@ fn merge(target: &Path, old: &Path) -> Result<(), String> {
                 continue;
             }
             let list = cols.join(", ");
-            conn.execute(
-                &format!(
-                    "INSERT OR IGNORE INTO main.\"{table}\" ({list}) SELECT {list} FROM legacy.\"{table}\""
-                ),
-                [],
-            )
-            .map_err(|e| format!("{table}: {e}"))?;
+            let n = conn
+                .execute(
+                    &format!(
+                        "INSERT OR IGNORE INTO main.\"{table}\" ({list}) SELECT {list} FROM legacy.\"{table}\""
+                    ),
+                    [],
+                )
+                .map_err(|e| format!("{table}: {e}"))?;
+            rows += n as u64;
         }
-        conn.execute_batch("COMMIT").map_err(|e| e.to_string())
+        conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+        Ok(rows)
     })();
     if result.is_err() {
         let _ = conn.execute_batch("ROLLBACK");
@@ -148,19 +159,64 @@ fn merge(target: &Path, old: &Path) -> Result<(), String> {
     result
 }
 
-/// Runs the migration into `target` from `sources`. Returns the lines to show
-/// the user (one notice when something moved, plus any warnings).
-pub fn run(target: &Path, sources: &[PathBuf]) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut found: Vec<&PathBuf> = sources.iter().filter(|p| p.is_file()).collect();
+/// What one pass did.
+#[derive(Debug, Default)]
+pub struct Report {
+    /// Lines for the user: a notice when rows moved, and warnings.
+    pub lines: Vec<String>,
+    /// Rows merged into the data file (a moved file counts as one move, not rows).
+    pub rows: u64,
+    /// An old file had been retired before and is back: an older program is
+    /// still writing to the old place.
+    pub old_writer: Option<PathBuf>,
+}
+
+fn stamp(path: &Path) -> (u64, SystemTime) {
+    let (len, mut time) = size_and_time(path);
+    let wal = with_suffix(path, "-wal");
+    let (wlen, wtime) = size_and_time(&wal);
+    if wtime > time {
+        time = wtime;
+    }
+    (len + wlen, time)
+}
+
+static MERGED: std::sync::Mutex<Vec<(PathBuf, (u64, SystemTime))>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn unchanged_since_merge(path: &Path) -> bool {
+    let now = stamp(path);
+    MERGED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|(p, s)| p == path && *s == now)
+}
+
+fn remember_merge(path: &Path) {
+    let mut seen = MERGED.lock().unwrap_or_else(|e| e.into_inner());
+    seen.retain(|(p, _)| p != path);
+    seen.push((path.to_path_buf(), stamp(path)));
+}
+
+/// Runs one migration pass into `target` from `sources`.
+pub fn run_report(target: &Path, sources: &[PathBuf]) -> Report {
+    let mut report = Report::default();
+    let mut found: Vec<&PathBuf> = sources
+        .iter()
+        .filter(|p| p.is_file() && !unchanged_since_merge(p))
+        .collect();
     if found.is_empty() {
-        return lines;
+        return report;
     }
     let Some(dir) = target.parent() else {
-        return lines;
+        return report;
     };
     if let Err(e) = crate::util::atomic::ensure_private_dir(dir) {
-        return vec![format!("cannot prepare {}: {e}", dir.display())];
+        report
+            .lines
+            .push(format!("cannot prepare {}: {e}", dir.display()));
+        return report;
     }
     // One process migrates at a time; the others carry on and find it done.
     let lock = dir.join("usage-migrate.lock");
@@ -173,7 +229,7 @@ pub fn run(target: &Path, sources: &[PathBuf]) -> Vec<String> {
         }
     }
     if std::fs::create_dir(&lock).is_err() {
-        return lines;
+        return report;
     }
     let mut moved = Vec::new();
     if !target.exists() {
@@ -189,18 +245,20 @@ pub fn run(target: &Path, sources: &[PathBuf]) -> Vec<String> {
                     chosen = Some(i);
                     break;
                 }
-                Ok(bad) => lines.push(format!(
+                Ok(bad) => report.lines.push(format!(
                     "skipping {}: integrity check says {bad}",
                     path.display()
                 )),
-                Err(e) => lines.push(format!("skipping {}: {e}", path.display())),
+                Err(e) => report
+                    .lines
+                    .push(format!("skipping {}: {e}", path.display())),
             }
         }
         if let Some(i) = chosen {
             let path = found.remove(i);
             match move_db(path, target) {
                 Ok(()) => moved.push(format!("moved {} to {}", path.display(), target.display())),
-                Err(e) => lines.push(e),
+                Err(e) => report.lines.push(e),
             }
         }
     }
@@ -210,27 +268,72 @@ pub fn run(target: &Path, sources: &[PathBuf]) -> Vec<String> {
                 continue;
             }
             match merge(target, path) {
-                Ok(()) => match retire(path) {
-                    Ok(()) => moved.push(format!("merged {}", path.display())),
-                    Err(e) => lines.push(e),
-                },
-                Err(e) => lines.push(format!("skipping {}: {e}", path.display())),
+                Ok(rows) => {
+                    report.rows += rows;
+                    if with_suffix(path, ".migrated").exists() {
+                        report.old_writer = Some(path.clone());
+                    }
+                    match retire(path) {
+                        Ok(()) => {}
+                        // Cannot be renamed: remember what was merged so the
+                        // same file is not merged again until it changes.
+                        Err(e) => {
+                            remember_merge(path);
+                            report.lines.push(e);
+                        }
+                    }
+                    if rows > 0 {
+                        moved.push(format!("merged {rows} rows from {}", path.display()));
+                    }
+                }
+                Err(e) => {
+                    remember_merge(path);
+                    report
+                        .lines
+                        .push(format!("skipping {}: {e}", path.display()));
+                }
             }
         }
     }
     let _ = std::fs::remove_dir(&lock);
     if !moved.is_empty() {
-        lines.insert(0, format!("usage data: {}", moved.join("; ")));
+        report
+            .lines
+            .insert(0, format!("usage data: {}", moved.join("; ")));
     }
-    lines
+    report
 }
 
-/// Migrates into the standard data file of the real environment and prints the
-/// result to stderr.
+/// [`run_report`], returning only the lines.
+pub fn run(target: &Path, sources: &[PathBuf]) -> Vec<String> {
+    run_report(target, sources).lines
+}
+
+static FIRST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Brings older data into the standard data file of the real environment.
+/// The first call in a process may print a notice (before any screen is
+/// drawn). Later calls, made on every refresh, are quiet: they cost a stat per
+/// old path, merge new rows when an older program wrote some, and report it
+/// once, at exit, through [`crate::say`].
 pub fn run_standard(target: &Path) {
+    let first = FIRST.swap(false, std::sync::atomic::Ordering::Relaxed);
     let home = crate::host::home_dir();
-    for line in run(target, &legacy_paths(&home)) {
-        eprintln!("{}: {line}", crate::host::program());
+    let report = run_report(target, &legacy_paths(&home));
+    for line in &report.lines {
+        let quiet_pass = !first && line.starts_with("usage data:");
+        if quiet_pass {
+            continue;
+        }
+        let line = format!("{}: {line}", crate::host::program());
+        if first {
+            crate::say::notice(&line);
+        } else {
+            crate::say::notice_once(&line);
+        }
+    }
+    if let Some(path) = &report.old_writer {
+        crate::say::old_writer_seen(&path.display().to_string());
     }
 }
 
@@ -277,7 +380,7 @@ mod tests {
         let playbook_old = home.join(".config/playbook/usage/usage.db");
         let standalone_old = home.join(".local/state/playbook-telemetry/usage.db");
         Layout {
-            target: home.join(".config/playbook/usage.db"),
+            target: home.join(".config/playbook/data/usage.db"),
             sources: vec![playbook_old.clone(), standalone_old.clone()],
             playbook_old,
             standalone_old,
@@ -304,6 +407,19 @@ mod tests {
             with_suffix(&l.target, "-shm").exists()
                 || !with_suffix(&l.playbook_old, "-shm").exists()
         );
+    }
+
+    #[test]
+    fn the_025_location_moves_into_the_data_folder() {
+        let home = scratch_dir("mig-025");
+        let old = home.join(".config/playbook/usage.db");
+        let target = home.join(".config/playbook/data/usage.db");
+        make(&old, &["a", "b"]);
+        std::fs::write(with_suffix(&old, "-shm"), b"").unwrap();
+        let lines = run(&target, &legacy_paths(&home));
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(ids(&target), ["a", "b"]);
+        assert!(!old.exists());
     }
 
     #[test]
@@ -402,5 +518,103 @@ mod tests {
             .query_row("PRAGMA journal_mode", [], |r| r.get(0))
             .unwrap();
         assert_eq!(mode, "wal");
+    }
+
+    #[test]
+    fn rows_an_older_program_adds_later_are_merged_quietly_and_flagged() {
+        let l = layout("mig-old-writer");
+        make(&l.target, &["t"]);
+        make(&l.playbook_old, &["a"]);
+        let first = run_report(&l.target, &l.sources);
+        assert_eq!(first.rows, 1);
+        assert!(first.old_writer.is_none());
+        assert!(
+            first.lines[0].contains("merged 1 rows"),
+            "{:?}",
+            first.lines
+        );
+        // An older playbook writes to the old path again.
+        make(&l.playbook_old, &["a", "b", "c"]);
+        let again = run_report(&l.target, &l.sources);
+        assert_eq!(again.rows, 2, "only the new rows count");
+        assert!(again.old_writer.is_some());
+        assert_eq!(ids(&l.target), ["a", "b", "c", "t"]);
+        assert!(!l.playbook_old.exists());
+    }
+
+    #[test]
+    fn a_pass_with_nothing_new_reports_nothing() {
+        let l = layout("mig-no-rows");
+        make(&l.target, &["a"]);
+        make(&l.playbook_old, &["a"]);
+        let r = run_report(&l.target, &l.sources);
+        assert_eq!(r.rows, 0);
+        assert!(r.lines.is_empty(), "{:?}", r.lines);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_old_file_that_cannot_be_retired_is_not_reported_again() {
+        use std::os::unix::fs::PermissionsExt;
+        let l = layout("mig-readonly");
+        make(&l.target, &["t"]);
+        make(&l.playbook_old, &["a"]);
+        let dir = l.playbook_old.parent().unwrap().to_path_buf();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let first = run_report(&l.target, &l.sources);
+        let second = run_report(&l.target, &l.sources);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(!first.lines.is_empty());
+        assert!(second.lines.is_empty(), "{:?}", second.lines);
+        assert_eq!(second.rows, 0);
+    }
+
+    #[test]
+    fn a_fresh_home_creates_an_owner_only_data_file_and_no_notice() {
+        let home = scratch_dir("mig-fresh");
+        let target = home.join(".config/playbook/data/usage.db");
+        assert!(run(&target, &legacy_paths(&home)).is_empty());
+        let conn = crate::db::open_db(&target).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM usage_events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&target), 0o600);
+            assert_eq!(mode(target.parent().unwrap()), 0o700);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unwritable_config_dir_gives_an_error_naming_the_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = scratch_dir("mig-readonly-home");
+        let dir = home.join(".config/playbook");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let err = crate::db::open_db(&dir.join("data/usage.db")).err();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let err = err.expect("opening in a read-only folder fails");
+        assert!(
+            err.contains("usage.db") || err.contains(".config/playbook"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn the_terminal_view_holds_notices_instead_of_printing() {
+        let _g = crate::say::TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::say::reset();
+        crate::say::hold();
+        // The quiet refresh pass only ever speaks through `say`.
+        crate::say::notice_once("warning from a refresh");
+        assert_eq!(crate::say::kept(), ["warning from a refresh"]);
+        crate::say::release();
     }
 }

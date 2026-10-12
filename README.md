@@ -67,14 +67,15 @@ It finds Claude Code history in `~/.claude/projects`, or in `$CLAUDE_CONFIG_DIR/
 
 The tool shares its data and settings with playbook, so both show the same numbers.
 
-State is one SQLite database, `~/.config/playbook/usage.db` (directory `0700`, file `0600`). Lock and receiver files sit next to it in `~/.config/playbook`. Several processes can use it at once (the terminal view and the receiver); it runs in WAL mode with a busy timeout.
+All playbook tools keep their databases in one folder, `~/.config/playbook/data`, whichever tool runs. This tool's file is `~/.config/playbook/data/usage.db` (folder `0700`, file `0600`). It is created on first use, so every command works on a new machine. Lock and receiver files sit next to it. Several processes can use it at once (the terminal view and the receiver); it runs in WAL mode with a busy timeout.
 
-On the first run, an older database is moved or merged into place, and one line on stderr says so:
+When an older database exists, the first run brings it in, and the view never prints while it is drawn:
 
-- `~/.config/playbook/usage/usage.db` (older playbook) moves up one directory with its `-wal` and `-shm` files.
-- `~/.local/state/playbook-telemetry/usage.db` and `~/.local/state/playbook-usage/usage.db` (older standalone releases, also under `$XDG_STATE_HOME`) are merged in one transaction, keyed on each table's primary key, then renamed to `*.migrated`. Nothing is deleted.
-- If the data file does not exist yet and several old files do, the larger and newer one is moved into place and the others are merged.
-- An old file that cannot be read is skipped with a warning and left untouched.
+- `~/.config/playbook/usage.db` (playbook 0.25, playbook-telemetry 0.1.5) and `~/.config/playbook/usage/usage.db` (older playbook) move into place with their `-wal` and `-shm` files, or merge when the data file already exists.
+- `~/.local/state/playbook-telemetry/usage.db` and `~/.local/state/playbook-usage/usage.db` (older standalone releases, also under `$XDG_STATE_HOME`) are merged in one transaction, keyed on each table's primary key.
+- Merged files are renamed to `*.migrated`. Nothing is deleted. One line on stderr says how many rows were merged, and only when some were.
+- If an older playbook keeps writing to the old path, its new rows are merged quietly on later refreshes, and one line at exit asks you to upgrade it (`brew upgrade playbook` or `playbook update`).
+- A file that cannot be read is skipped with a warning and left untouched.
 
 Settings are playbook's own, from the global tier of its config store (`~/.config/playbook/playbook.db`), and from the nested `usage` object of `~/.config/playbook/config.json` when that store does not exist. The tool has no config file of its own and only reads them. Set them with `playbook config set usage.<key> <value>`. An invalid value is ignored with a warning, and a missing one means the default. An old `~/.config/playbook-telemetry/config.json` is no longer read; the tool names it on stderr if it exists.
 
