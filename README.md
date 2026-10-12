@@ -14,9 +14,15 @@ It is part of the [playbook](https://github.com/pragmatic-engineer/playbook) too
 
 ## Install
 
-`pbtop` is a short alias for `playbook-telemetry`: the same program, installed alongside it. Anywhere this page says `playbook-telemetry` you can type `pbtop`.
+The tool ships two command names for the same program: `playbook-telemetry` and the short alias `pbtop`. Anywhere this page says `playbook-telemetry` you can type `pbtop`.
 
-Download the archive for your platform from the [latest release](https://github.com/pragmatic-engineer/playbook-telemetry/releases/latest). Releases carry `playbook-telemetry-<version>-<target>.tar.gz` for macOS (arm64 and x86_64), Linux (arm64 and x86_64, static musl) and Windows (x86_64), each holding both `playbook-telemetry` and `pbtop`, plus a `SHA256SUMS` file with build provenance attestations.
+With Homebrew (macOS and Linux), which installs both names:
+
+```sh
+brew install pragmatic-engineer/tap/playbook-telemetry
+```
+
+Or download the archive for your platform from the [latest release](https://github.com/pragmatic-engineer/playbook-telemetry/releases/latest). Releases carry `playbook-telemetry-<version>-<target>.tar.gz` for macOS (arm64 and x86_64), Linux (arm64 and x86_64, static musl) and Windows (x86_64), each holding both `playbook-telemetry` and `pbtop`, plus a `SHA256SUMS` file with build provenance attestations.
 
 ```sh
 sha256sum -c --ignore-missing SHA256SUMS
@@ -48,24 +54,29 @@ It finds Claude Code history in `~/.claude/projects`, or in `$CLAUDE_CONFIG_DIR/
 
 ## Where it keeps its data
 
-State is one SQLite database, `usage.db`, owner-only, in `$XDG_STATE_HOME/playbook-telemetry` (default `~/.local/state/playbook-telemetry`). If a database already exists under `~/.config/playbook/usage`, that one is used, so playbook and this tool share one store.
+The tool shares its data and settings with playbook, so both show the same numbers.
 
-Optional settings go in `$XDG_CONFIG_HOME/playbook-telemetry/config.json` (default `~/.config/playbook-telemetry/config.json`), a flat object of dotted keys:
+State is one SQLite database, `~/.config/playbook/usage.db`, owner-only. The first run moves an older database from `~/.config/playbook/usage/usage.db` or `~/.local/state/playbook-usage/usage.db` into place and renames the old file to `*.migrated`.
+
+Settings live in `~/.config/playbook/config.json`, in playbook's nested JSON format under the `usage` key. The tool has no config file of its own. Playbook users can also set them with `playbook config set usage.<key> <value>`.
 
 ```json
 {
-  "usage.theme": "default",
-  "usage.weekStart": "monday",
-  "usage.refreshSeconds": 5,
-  "usage.budget.monthlyUsd": 200,
-  "usage.budget.weeklyUsd": 50,
-  "usage.telemetry": "auto",
-  "usage.telemetryRetentionDays": 90,
-  "usage.telemetryMaxRows": 500000
+  "usage": {
+    "theme": "default",
+    "weekStart": "monday",
+    "refreshSeconds": 5,
+    "budget": { "monthlyUsd": 200, "weeklyUsd": 50 },
+    "telemetry": "auto",
+    "telemetryRetentionDays": 90,
+    "telemetryMaxRows": 500000
+  }
 }
 ```
 
 A missing file or key means the default.
+
+This shared location is landing in a coming release. Until then, older releases keep state under `~/.local/state/playbook-telemetry` and read settings from `~/.config/playbook-telemetry/config.json`.
 
 ## Telemetry receiver
 
