@@ -4,5 +4,5 @@
 //! `pbtop`: the short alias of `playbook-usage`, the same program.
 
 fn main() {
-    playbook_usage::cli::main();
+    playbook_telemetry::cli::main();
 }
