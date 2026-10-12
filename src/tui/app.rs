@@ -885,3 +885,367 @@ mod tests {
     const NOW: i64 = 1_788_400_000;
     const DAY: i64 = 86_400;
 
+    /// An app with one event a day for the last `days` days, in a 100x30 screen.
+    fn charted(range: Range, days: i64) -> App {
+        use crate::query::LiveView;
+        use crate::UsageEvent;
+        let events: Vec<UsageEvent> = (0..days)
+            .map(|d| UsageEvent {
+                event_id: format!("e{d}"),
+                timestamp: NOW - d * DAY,
+                session_id: "s".into(),
+                model: "opus".into(),
+                cost_usd: 1.0 + d as f64,
+                ..UsageEvent::default()
+            })
+            .collect();
+        let mut app = App::new(range);
+        app.data = Some(Data::build(&events, LiveView::default(), NOW, range, ""));
+        app
+    }
+
+    fn today() -> i64 {
+        NOW.div_euclid(DAY)
+    }
+
+    #[test]
+    fn left_and_right_move_the_chart_cursor_one_day_and_stop_at_the_ends() {
+        let mut app = charted(Range::LastDays(30), 30);
+        assert_eq!(app.cursor, None);
+        // From no cursor, the newest day is where it starts, so left goes back.
+        app.key(press(KeyCode::Left));
+        assert_eq!(app.cursor, Some(today() - 1));
+        app.key(press(KeyCode::Left));
+        assert_eq!(app.cursor, Some(today() - 2));
+        app.key(press(KeyCode::Right));
+        assert_eq!(app.cursor, Some(today() - 1));
+        app.key(press(KeyCode::Right));
+        app.key(press(KeyCode::Right));
+        assert_eq!(app.cursor, Some(today()), "stops on the newest day");
+        for _ in 0..40 {
+            app.key(press(KeyCode::Left));
+        }
+        assert_eq!(app.cursor, Some(today() - 29), "stops on the oldest day");
+    }
+
+    // NOW is Thursday 2026-09-03, so the Monday week has bars from today - 3
+    // to today + 3 and the cursor starts on today, not on the last bar.
+    #[test]
+    fn the_cursor_starts_on_today_when_the_week_has_days_to_come() {
+        let mut app = charted(Range::ThisWeek(WeekStart::Monday), 7);
+        app.key(press(KeyCode::Left));
+        assert_eq!(app.cursor, Some(today() - 1));
+        let mut app = charted(Range::ThisWeek(WeekStart::Monday), 7);
+        app.key(press(KeyCode::Right));
+        assert_eq!(app.cursor, Some(today() + 1));
+    }
+
+    #[test]
+    fn home_and_end_jump_the_cursor_when_a_chart_has_the_focus() {
+        let mut app = charted(Range::LastDays(30), 30);
+        app.key(press(KeyCode::Char('1')));
+        app.key(press(KeyCode::Home));
+        assert_eq!(app.cursor, Some(today() - 29));
+        app.key(press(KeyCode::End));
+        assert_eq!(app.cursor, Some(today()));
+        // On a table they still move the row, not the cursor.
+        app.cursor = None;
+        app.key(press(KeyCode::Char('3')));
+        app.key(press(KeyCode::End));
+        assert_eq!(app.cursor, None);
+    }
+
+    #[test]
+    fn a_wide_range_moves_the_cursor_one_bar_which_is_several_days() {
+        let mut app = charted(Range::LastDays(90), 90);
+        let plot = app.plot(Panel::Spend).expect("a chart");
+        let per = plot.geo.per as i64;
+        assert!(per > 1, "90 days do not fit one column each at 100 wide");
+        app.key(press(KeyCode::Left));
+        let first = app.cursor.unwrap();
+        app.key(press(KeyCode::Left));
+        assert_eq!(first - app.cursor.unwrap(), per);
+    }
+
+    #[test]
+    fn the_cursor_resets_when_the_range_changes_and_survives_a_filter() {
+        let mut app = charted(Range::LastDays(30), 30);
+        app.key(press(KeyCode::Left));
+        assert!(app.cursor.is_some());
+        app.filter = "opus".into();
+        app.key(press(KeyCode::Char('c')));
+        assert!(app.cursor.is_some(), "a filter keeps the day");
+        app.key(press(KeyCode::Char('w')));
+        assert_eq!(app.cursor, None);
+    }
+
+    #[test]
+    fn the_cursor_keys_do_nothing_without_data_or_on_a_tiny_screen() {
+        let mut app = App::new(Range::All);
+        app.key(press(KeyCode::Left));
+        assert_eq!(app.cursor, None);
+        let mut small = charted(Range::LastDays(30), 30);
+        small.area = Rect::new(0, 0, 50, 10);
+        small.key(press(KeyCode::Left));
+        assert_eq!(small.cursor, None);
+    }
+
+    #[test]
+    fn v_steps_the_spend_panel_through_total_by_model_and_daily() {
+        let mut app = App::new(Range::All);
+        app.key(press(KeyCode::Char('1')));
+        assert_eq!(app.spend_view, SpendView::Total);
+        let mut seen = Vec::new();
+        for _ in 0..3 {
+            assert_eq!(app.key(press(KeyCode::Char('v'))), Effect::None);
+            seen.push(app.spend_view);
+        }
+        assert_eq!(
+            seen,
+            [SpendView::ByModel, SpendView::Daily, SpendView::Total]
+        );
+    }
+
+    fn daily() -> App {
+        let mut app = charted(Range::LastDays(30), 30);
+        app.spend_view = SpendView::Daily;
+        app.key(press(KeyCode::Char('1')));
+        app
+    }
+
+    #[test]
+    fn the_daily_table_has_a_row_for_each_day_and_moves_its_selection() {
+        let mut app = daily();
+        assert_eq!(app.rows(Panel::Spend), 30);
+        assert!(app.is_table(Panel::Spend) && !app.is_table(Panel::Tokens));
+        app.key(press(KeyCode::Down));
+        app.key(press(KeyCode::Down));
+        assert_eq!(app.selection(Panel::Spend), 2);
+        app.key(press(KeyCode::End));
+        assert_eq!(app.selection(Panel::Spend), 29);
+        // Only the chart views are drawn as charts.
+        app.spend_view = SpendView::Total;
+        assert_eq!(app.rows(Panel::Spend), 0);
+    }
+
+    #[test]
+    fn s_sorts_the_daily_table_but_not_the_chart_views() {
+        let mut app = daily();
+        assert_eq!(app.sort(Panel::Spend), Sort::new(0, true));
+        app.key(press(KeyCode::Char('s')));
+        assert_eq!(app.sort(Panel::Spend), Sort::new(1, true));
+        app.key(press(KeyCode::Char('S')));
+        assert_eq!(app.sort(Panel::Spend), Sort::new(1, false));
+        app.spend_view = SpendView::ByModel;
+        app.key(press(KeyCode::Char('s')));
+        app.key(press(KeyCode::Char('S')));
+        assert_eq!(app.sort(Panel::Spend), Sort::new(1, false), "unchanged");
+    }
+
+    #[test]
+    fn the_cursor_keys_leave_the_daily_table_alone() {
+        let mut app = daily();
+        app.key(press(KeyCode::Left));
+        assert_eq!(app.cursor, None);
+    }
+
+    #[test]
+    fn enter_on_a_day_row_applies_no_filter() {
+        let mut app = daily();
+        app.key(press(KeyCode::Char('1')));
+        for _ in 0..3 {
+            app.key(press(KeyCode::Down));
+        }
+        assert_eq!((app.focus, app.selection(Panel::Spend)), (Panel::Spend, 3));
+        assert_eq!(app.key(press(KeyCode::Enter)), Effect::None);
+    }
+
+    #[test]
+    fn an_unbound_key_does_nothing() {
+        let mut app = App::new(Range::All);
+        assert_eq!(app.key(press(KeyCode::Char('z'))), Effect::None);
+        assert!(!app.quit);
+    }
+
+    #[test]
+    fn v_changes_only_the_view_of_the_focused_panel() {
+        let mut app = loaded();
+        // Models, Tokens, Live and Sessions have no view: v does nothing.
+        for key in ['2', '3', '5', '6'] {
+            app.key(press(KeyCode::Char(key)));
+            app.key(press(KeyCode::Char('v')));
+            assert_eq!(app.spend_view, SpendView::Total, "{key}");
+            assert_eq!(app.projects_view, ProjectsView::Projects, "{key}");
+        }
+        app.key(press(KeyCode::Char('4')));
+        app.key(press(KeyCode::Char('v')));
+        assert_eq!(app.projects_view, ProjectsView::Agents);
+        assert_eq!(app.spend_view, SpendView::Total);
+        app.key(press(KeyCode::Char('1')));
+        app.key(press(KeyCode::Char('v')));
+        assert_eq!(app.spend_view, SpendView::ByModel);
+        assert_eq!(app.projects_view, ProjectsView::Agents);
+    }
+
+    #[test]
+    fn h_and_question_mark_open_the_help_and_any_other_key_closes_it() {
+        for open in ['h', '?'] {
+            let mut app = loaded();
+            app.key(press(KeyCode::Char(open)));
+            assert_eq!(app.help, Some(0));
+            // A key that would change the range only closes the window.
+            assert_eq!(app.key(press(KeyCode::Char('a'))), Effect::None);
+            assert_eq!((app.help, app.range), (None, Range::All));
+        }
+        for close in [KeyCode::Esc, KeyCode::Char('h'), KeyCode::Char('x')] {
+            let mut app = loaded();
+            app.key(press(KeyCode::Char('h')));
+            app.key(press(close));
+            assert_eq!(app.help, None, "{close:?}");
+            assert!(!app.quit, "{close:?}");
+        }
+    }
+
+    #[test]
+    fn the_help_scrolls_with_the_arrows_and_stops_at_its_ends() {
+        let mut app = loaded();
+        app.area = Rect::new(0, 0, 80, 24);
+        app.key(press(KeyCode::Char('h')));
+        app.key(press(KeyCode::Up));
+        assert_eq!(app.help, Some(0));
+        app.key(press(KeyCode::Down));
+        assert_eq!(app.help, Some(1));
+        app.key(press(KeyCode::End));
+        let last = keys::help_lines().len() - app.help_page();
+        assert_eq!(app.help, Some(last));
+        app.key(press(KeyCode::Down));
+        assert_eq!(app.help, Some(last));
+        app.key(press(KeyCode::Home));
+        assert_eq!(app.help, Some(0));
+    }
+
+    #[test]
+    fn a_refresh_while_the_help_is_open_keeps_it_and_the_selection() {
+        let mut app = loaded();
+        app.key(press(KeyCode::Char('3')));
+        app.key(press(KeyCode::Down));
+        app.key(press(KeyCode::Char('h')));
+        app.key(press(KeyCode::Down));
+        app.refresh(data_with([5.0, 1.0, 3.0]));
+        assert_eq!(app.help, Some(1));
+        assert_eq!(app.selection(Panel::Models), 1);
+        assert_eq!(app.focus, Panel::Models);
+    }
+
+    #[test]
+    fn ctrl_c_quits_while_the_help_is_open() {
+        let mut app = loaded();
+        app.key(press(KeyCode::Char('h')));
+        app.key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn r_capital_asks_for_a_fresh_read_and_p_opens_sessions() {
+        let mut app = loaded();
+        assert_eq!(app.key(press(KeyCode::Char('R'))), Effect::Requery);
+        assert_eq!(app.key(press(KeyCode::Char('p'))), Effect::Sessions);
+    }
+
+    /// Every key the handler reacts to is in the key table, so the help and
+    /// the footer list it. The probe presses every key a keyboard offers on an
+    /// app with data, a filter and each focus, and a key that changes anything
+    /// must have a binding.
+    #[test]
+    fn every_key_that_does_something_is_in_the_help_table() {
+        let mut keys_to_try: Vec<KeyCode> =
+            (0x20u8..0x7f).map(|b| KeyCode::Char(b as char)).collect();
+        keys_to_try.extend([
+            KeyCode::Tab,
+            KeyCode::BackTab,
+            KeyCode::Enter,
+            KeyCode::Esc,
+            KeyCode::Backspace,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Home,
+            KeyCode::End,
+            KeyCode::PageUp,
+            KeyCode::PageDown,
+            KeyCode::Delete,
+            KeyCode::Insert,
+        ]);
+        for code in keys_to_try {
+            for focus in PANELS {
+                let mut app = charted(Range::LastDays(30), 30);
+                app.filter = "opus".into();
+                app.focus = focus;
+                let before = format!("{app:?}");
+                let effect = app.key(press(code));
+                let changed = effect != Effect::None || format!("{app:?}") != before;
+                if changed {
+                    assert!(
+                        keys::lookup(code, false).is_some(),
+                        "{code:?} does something on {focus:?} but is not in the key table"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_command_has_a_binding_and_every_binding_is_in_the_help() {
+        use keys::Cmd::*;
+        for cmd in [
+            Quit,
+            Theme,
+            Today,
+            Week,
+            LastWeek,
+            Month,
+            LastMonth,
+            All,
+            CycleRange,
+            Filter,
+            ClearFilter,
+            FocusPanel,
+            NextPanel,
+            PrevPanel,
+            CursorLeft,
+            CursorRight,
+            First,
+            Last,
+            Down,
+            Up,
+            PageDown,
+            PageUp,
+            NextView,
+            Sort,
+            SortFlip,
+            Pick,
+            Sessions,
+            Help,
+            Refresh,
+        ] {
+            assert!(keys::BINDINGS.iter().any(|b| b.cmd == cmd), "{cmd:?}");
+        }
+        let lines = keys::help_lines();
+        for b in keys::BINDINGS {
+            assert!(
+                lines.iter().any(|l| matches!(l,
+                    keys::HelpLine::Key { shown, .. } if *shown == b.shown)),
+                "{} missing from the help",
+                b.shown
+            );
+            for code in b.keys {
+                assert_eq!(
+                    keys::lookup(*code, b.ctrl).map(|x| x.cmd),
+                    Some(b.cmd),
+                    "{code:?}"
+                );
+            }
+        }
+    }
+}
