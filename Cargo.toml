@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Igor Santos
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "playbook-usage"
+version = "0.0.0"
+edition = "2021"
+description = "Placeholder crate for playbook-usage"
+license = "Apache-2.0"
+publish = false
+
+[lints.clippy]
+uninlined_format_args = "warn"
+manual_let_else = "warn"
+undocumented_unsafe_blocks = "warn"
