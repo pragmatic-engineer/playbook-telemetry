@@ -898,3 +898,75 @@ mod tests {
         assert_eq!(rows[0].day, rows[1].day + 1);
     }
 
+    #[test]
+    fn session_days_tie_break_by_id_and_short_ids_take_eight_characters() {
+        let rows = session_days(&[event(NOW, "b", 1.0), event(NOW + 1, "a", 1.0)]);
+        assert_eq!(rows[0].id, "a");
+        assert!(session_days(&[]).is_empty());
+        assert_eq!(short_id("0199aaaa-0000-7000-8000-000000000001"), "0199aaaa");
+        assert_eq!(short_id("abc"), "abc");
+    }
+
+    #[test]
+    fn live_view_reports_active_sessions_and_burn() {
+        let recent = event(NOW - 60, "live", 0.5);
+        let stale = event(NOW - 3 * 3600, "idle", 9.0);
+        let window = vec![stale.clone(), recent.clone()];
+        let sessions = vec![recent.clone()];
+        let v = live_view(&window, &sessions, &[recent], NOW);
+        assert_eq!(v.active.len(), 1);
+        assert_eq!(v.active[0].id, "live");
+        assert_eq!(v.hour.messages, 1);
+        assert_eq!(v.burn.len(), BURN_MINUTES as usize);
+        assert!((v.burn.iter().map(|b| b.1).sum::<f64>() - 0.5).abs() < 1e-9);
+        assert_eq!(v.feed.len(), 1);
+    }
+
+    #[test]
+    fn a_hidden_plugin_skill_gets_a_readable_label() {
+        use crate::telemetry_db::{insert_request, migrate_up, TelemetryRequest};
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        for (id, skill) in [("r1", "third-party"), ("r2", "review")] {
+            let r = TelemetryRequest {
+                session_id: "s".into(),
+                request_id: id.into(),
+                timestamp: NOW - 10,
+                skill_name: skill.into(),
+                cost_usd: 1.0,
+                ..Default::default()
+            };
+            insert_request(&conn, &r).unwrap();
+        }
+        let v = load_skills(&conn, Range::LastDays(1), NOW).unwrap();
+        let keys: Vec<&str> = v.rows.iter().map(|g| g.key.as_str()).collect();
+        assert!(keys.contains(&"review") && keys.contains(&"plugin skills (names hidden)"));
+        assert!(!keys.contains(&"third-party"));
+    }
+
+    #[test]
+    fn health_for_a_period_compares_the_same_span_of_the_previous_one() {
+        use crate::telemetry_db::{insert_tool, migrate_up, TelemetryTool};
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        let tool = |id: &str, ts: i64| TelemetryTool {
+            session_id: "s".into(),
+            tool_use_id: id.into(),
+            timestamp: ts,
+            tool_name: "Bash".into(),
+            success: true,
+            duration_ms: 10,
+        };
+        let day = NOW.div_euclid(SECONDS_PER_DAY) * SECONDS_PER_DAY;
+        insert_tool(&conn, &tool("today", day)).unwrap();
+        insert_tool(&conn, &tool("yesterday", day - SECONDS_PER_DAY + 60)).unwrap();
+        insert_tool(&conn, &tool("old", day - 3 * SECONDS_PER_DAY)).unwrap();
+        let v = load_health(&conn, Range::Today, NOW).unwrap();
+        assert_eq!(v.now.tool_calls, 1);
+        assert_eq!(v.before.as_ref().unwrap().tool_calls, 1);
+        assert_eq!(v.tools_before.len(), 1);
+        let v = load_health(&conn, Range::LastDays(30), NOW).unwrap();
+        assert_eq!(v.now.tool_calls, 3);
+        assert!(v.before.is_none() && v.tools_before.is_empty());
+    }
+}
