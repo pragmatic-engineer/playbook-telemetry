@@ -254,3 +254,34 @@ jobs:
           subject-path: |
             dist/playbook-telemetry-*
             dist/SHA256SUMS
+
+  # Fast path to Homebrew: tell the tap a release exists so its formula is
+  # bumped within minutes. The tap also checks daily, so this is only a speed
+  # up. It needs the TAP_DISPATCH_TOKEN secret (see CONTRIBUTING.md); without
+  # it the step says so and the job still succeeds.
+  notify-tap:
+    needs: [checksums]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+
+      - name: Tell the Homebrew tap
+        env:
+          TAP_DISPATCH_TOKEN: ${{ secrets.TAP_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_DISPATCH_TOKEN:-}" ]; then
+            echo "TAP_DISPATCH_TOKEN is not set. The tap will pick this release up on its daily run."
+            exit 0
+          fi
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${TAP_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/pragmatic-engineer/homebrew-tap/dispatches \
+            -d '{"event_type":"tool-released","client_payload":{"tool":"playbook-telemetry"}}'
+          echo "Sent tool-released to pragmatic-engineer/homebrew-tap."
