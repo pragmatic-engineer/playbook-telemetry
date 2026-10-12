@@ -24,4 +24,9 @@ cargo run --bin pbtop -- --help
 
 ## Releasing
 
-Releasing updates Homebrew automatically. When the release workflow finishes, its last job sends a `tool-released` event to `pragmatic-engineer/homebrew-tap`, which opens, checks and merges a pull request that bumps `Formula/playbook-telemetry.rb` from this release's `SHA256SUMS`. The event needs the `TAP_DISPATCH_TOKEN` repository secret, a fine-grained token limited to the tap with Contents read and write access. If the secret is missing the job logs that and succeeds, and the tap's daily run picks the release up instead.
+Releasing a tool opens a bump PR in playbook and updates the Homebrew tap. When the release workflow finishes, its last job sends two events using the `TAP_DISPATCH_TOKEN` repository secret:
+
+- `tool-released` to `pragmatic-engineer/homebrew-tap`, which opens, checks and merges a pull request that bumps `Formula/playbook-telemetry.rb` from this release's `SHA256SUMS`.
+- `internal-crate-release` to `pragmatic-engineer/playbook`, with the crate, repo and tag. playbook then opens a pull request that moves its pinned `playbook-telemetry` git tag and `Cargo.lock`, runs the checks and merges it.
+
+The secret is a fine-grained token limited to the tap and playbook, with Contents read and write access on both (the permission that allows `repository_dispatch`). If the secret is missing the job logs that and succeeds, and the daily runs in both repos pick the release up instead.

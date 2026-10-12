@@ -255,8 +255,9 @@ jobs:
             dist/playbook-telemetry-*
             dist/SHA256SUMS
 
-  # Fast path to Homebrew: tell the tap a release exists so its formula is
-  # bumped within minutes. The tap also checks daily, so this is only a speed
+  # Fast path to Homebrew and playbook: tell the tap and the playbook repo a
+  # release exists so the formula and the pinned dependency are bumped within
+  # minutes. The tap also checks daily, so this is only a speed
   # up. It needs the TAP_DISPATCH_TOKEN secret (see CONTRIBUTING.md); without
   # it the step says so and the job still succeeds.
   notify-tap:
@@ -285,3 +286,25 @@ jobs:
             https://api.github.com/repos/pragmatic-engineer/homebrew-tap/dispatches \
             -d '{"event_type":"tool-released","client_payload":{"tool":"playbook-telemetry"}}'
           echo "Sent tool-released to pragmatic-engineer/homebrew-tap."
+
+      - name: Tell playbook
+        env:
+          TAP_DISPATCH_TOKEN: ${{ secrets.TAP_DISPATCH_TOKEN }}
+          REF_TYPE: ${{ github.ref_type }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_DISPATCH_TOKEN:-}" ]; then
+            echo "::notice::TAP_DISPATCH_TOKEN is not set. playbook will pick this release up on its daily run."
+            exit 0
+          fi
+          if [ "$REF_TYPE" != tag ]; then
+            echo "::notice::Not a tag run. Skipping the playbook dispatch."
+            exit 0
+          fi
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${TAP_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/pragmatic-engineer/playbook/dispatches \
+            -d "{\"event_type\":\"internal-crate-release\",\"client_payload\":{\"crate\":\"playbook-telemetry\",\"repo\":\"pragmatic-engineer/playbook-telemetry\",\"tag\":\"${TAG}\"}}"
+          echo "Sent internal-crate-release to pragmatic-engineer/playbook."
