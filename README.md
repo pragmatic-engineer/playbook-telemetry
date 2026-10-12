@@ -1,4 +1,11 @@
-# playbook-telemetry
+# playbook-telemetry (alias: pbtop)
+
+Type `pbtop`. It is the short name of the `playbook-telemetry` command, and both run the same program.
+
+```sh
+brew install pragmatic-engineer/tap/playbook-telemetry
+pbtop
+```
 
 A token and cost dashboard for Claude Code sessions. It reads the session history Claude Code already keeps on your machine, prices it, and shows it in a terminal view or as a text or JSON report. Everything stays local.
 
@@ -14,12 +21,13 @@ It is part of the [playbook](https://github.com/pragmatic-engineer/playbook) too
 
 ## Install
 
-The tool ships two command names for the same program: `playbook-telemetry` and the short alias `pbtop`. Anywhere this page says `playbook-telemetry` you can type `pbtop`.
+The tool ships two command names for the same program: the short alias `pbtop` and the long name `playbook-telemetry`. Type `pbtop` at the prompt and use `playbook-telemetry` in scripts, where the full name is easier to search for.
 
 With Homebrew (macOS and Linux), which installs both names:
 
 ```sh
 brew install pragmatic-engineer/tap/playbook-telemetry
+pbtop
 ```
 
 Or download the archive for your platform from the [latest release](https://github.com/pragmatic-engineer/playbook-telemetry/releases/latest). Releases carry `playbook-telemetry-<version>-<target>.tar.gz` for macOS (arm64 and x86_64), Linux (arm64 and x86_64, static musl) and Windows (x86_64), each holding both `playbook-telemetry` and `pbtop`, plus a `SHA256SUMS` file with build provenance attestations.
@@ -34,19 +42,22 @@ Or build from source with the Rust version in `rust-toolchain.toml`:
 
 ```sh
 cargo build --release
+./target/release/pbtop
 ```
 
 ## Use
 
 ```sh
-playbook-telemetry                 # terminal view, this week against last week
-playbook-telemetry --summary       # text summary and exit
-playbook-telemetry --json          # the same numbers as JSON
-playbook-telemetry --range 30d     # today, week, last-week, month, last-month, 30d, 60d, 90d, all
-playbook-telemetry status          # is the telemetry receiver running
-playbook-telemetry collect         # run the local OpenTelemetry receiver in the foreground
-playbook-telemetry prune --dry-run # say what old telemetry rows would be removed
+pbtop                 # terminal view, this week against last week
+pbtop --summary       # text summary and exit
+pbtop --json          # the same numbers as JSON
+pbtop --range 30d     # today, week, last-week, month, last-month, 30d, 60d, 90d, all
+pbtop status          # is the telemetry receiver running
+pbtop collect         # run the local OpenTelemetry receiver in the foreground
+pbtop prune --dry-run # say what old telemetry rows would be removed
 ```
+
+`playbook-telemetry` takes the same arguments and is the long name for scripts. `pbtop --help` and `pbtop --version` print `pbtop`, and the long name prints `playbook-telemetry`.
 
 Days are UTC. Weeks start on Monday unless `usage.weekStart` says otherwise.
 
@@ -80,7 +91,7 @@ This shared location is landing in a coming release. Until then, older releases 
 
 ## Telemetry receiver
 
-`playbook-telemetry collect` listens on 127.0.0.1 only and stores API request cost and token rows, tool call timings and API errors from Claude Code's JSON telemetry. Prompts, tool content, paths, emails and user ids are never stored. The receiver checks a bearer token. Its port and token are in `collector.json` in the state folder (owner-only; `playbook-telemetry status` shows the port and never prints the token). To point a Claude Code session at it, set `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_LOGS_EXPORTER=otlp`, `OTEL_METRICS_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<port>` and `OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>"` for that session. Playbook's `cc` launcher does all of this for you. Without the receiver, every total still comes from the session transcripts.
+`pbtop collect` listens on 127.0.0.1 only and stores API request cost and token rows, tool call timings and API errors from Claude Code's JSON telemetry. Prompts, tool content, paths, emails and user ids are never stored. The receiver checks a bearer token. Its port and token are in `collector.json` in the state folder (owner-only; `pbtop status` shows the port and never prints the token). To point a Claude Code session at it, set `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_LOGS_EXPORTER=otlp`, `OTEL_METRICS_EXPORTER=otlp`, `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:<port>` and `OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>"` for that session. Playbook's `cc` launcher does all of this for you. Without the receiver, every total still comes from the session transcripts.
 
 ## Use it as a library
 
