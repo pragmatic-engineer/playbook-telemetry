@@ -15,7 +15,8 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 /// prints the same numbers as JSON for scripts. Days are UTC. Ranges: today,
 /// week, last-week, month, last-month, 30d, 60d, 90d, all.
 ///
-/// Example: `playbook-telemetry --range today` (`pbtop` is a short alias)
+/// Example: `pbtop --range today`. `pbtop` is the short alias of
+/// `playbook-telemetry`, which is the long name for scripts.
 #[derive(Parser, Debug)]
 #[command(name = "playbook-telemetry", version)]
 struct Cli {
@@ -46,10 +47,22 @@ fn invoked_name() -> &'static str {
     Box::leak(name.into_boxed_str())
 }
 
+/// The first help line, which names both commands.
+fn alias_line(name: &str) -> &'static str {
+    if name == "pbtop" {
+        "pbtop (long name: playbook-telemetry)"
+    } else {
+        "playbook-telemetry (alias: pbtop)"
+    }
+}
+
 /// Shared entry point of both binaries, `playbook-telemetry` and its `pbtop` alias.
 pub fn main() {
     let name = invoked_name();
-    let matches = Cli::command().name(name).get_matches();
+    let matches = Cli::command()
+        .name(name)
+        .before_help(alias_line(name))
+        .get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     let paths = Paths::real();
     let opts = Opts {
