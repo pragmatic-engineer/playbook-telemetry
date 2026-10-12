@@ -895,3 +895,313 @@ struct Figure {
     better_up: bool,
 }
 
+/// A count with its rate beside it: `6 (2.9%)`.
+fn counted(count: u64, rate: f64) -> String {
+    format!("{count} ({})", percent(rate))
+}
+
+/// The figures of the health view, the ones that tell something is wrong
+/// first. Only a few rows fit in a small terminal and the table scrolls.
+fn figures(data: &Data) -> Vec<Figure> {
+    let h = &data.health;
+    let active = h.now.active_ms > 0 || h.before.as_ref().is_some_and(|b| b.active_ms > 0);
+    let hit = |t: &crate::query::Totals| {
+        let all = t.input_tokens + t.cache_creation_tokens + t.cache_read_tokens;
+        if all == 0 {
+            0.0
+        } else {
+            t.cache_read_tokens as f64 / all as f64
+        }
+    };
+    let figure = |name, better_up, f: &dyn Fn(&Health) -> (f64, String)| {
+        let (now, now_text) = f(&h.now);
+        let before = h.before.as_ref().map(f);
+        Figure {
+            name,
+            now,
+            before: before.as_ref().map(|b| b.0),
+            now_text,
+            before_text: before.map(|b| b.1),
+            better_up,
+        }
+    };
+    let cache = data.comparison.as_ref().map(|c| hit(&c.previous));
+    vec![
+        figure("API errors", false, &|h| {
+            (h.errors as f64, counted(h.errors, h.api_error_rate()))
+        }),
+        figure("Retries", false, &|h| {
+            (h.retried as f64, h.retried.to_string())
+        }),
+        figure("Tool errors", false, &|h| {
+            (
+                h.tool_failures as f64,
+                counted(h.tool_failures, h.tool_error_rate()),
+            )
+        }),
+        // Claude Code's own active time when it was collected, else the
+        // floor made of API and tool time.
+        if active {
+            figure("Active time", true, &|h| {
+                (h.active_ms as f64, duration_ms(h.active_ms as f64))
+            })
+        } else {
+            figure("Busy time", true, &|h| {
+                (h.busy_ms() as f64, duration_ms(h.busy_ms() as f64))
+            })
+        },
+        Figure {
+            name: "Cache hit (transcripts)",
+            now: hit(&data.totals),
+            before: cache,
+            now_text: percent(hit(&data.totals)),
+            before_text: cache.map(percent),
+            better_up: true,
+        },
+        figure("API requests", true, &|h| {
+            (h.requests as f64, compact(h.requests))
+        }),
+        figure("Lines changed", true, &|h| {
+            (h.lines_changed as f64, compact(h.lines_changed))
+        }),
+        figure("Commits", true, &|h| (h.commits as f64, compact(h.commits))),
+        figure("Pull requests", true, &|h| {
+            (h.pull_requests as f64, compact(h.pull_requests))
+        }),
+    ]
+}
+
+/// API errors, retries, tool errors, busy time and cache hit rate for the
+/// range against the previous span, from telemetry. The cache hit rate comes
+/// from transcripts, so it stays available without telemetry.
+fn health(frame: &mut Frame, area: Rect, app: &App, data: &Data, pal: &Palette) {
+    let mut block = view_block(pal, app, area, Panel::Projects, "Health", pal.box_mem);
+    if !data.telemetry_rows {
+        return empty(frame, area, pal, block, TELEMETRY_OFF);
+    }
+    block = block.title(telemetry_note(pal, data));
+    let min = if data.health.before.is_some() {
+        0
+    } else {
+        u16::MAX
+    };
+    let cols = [
+        col("figure", Constraint::Fill(1), 0),
+        col(">now", Constraint::Length(12), 0),
+        col(">before", Constraint::Length(12), min),
+        col(">change", Constraint::Length(8), min),
+    ];
+    let rows = figures(data);
+    debug_assert_eq!(rows.len(), HEALTH_ROWS);
+    table(
+        frame,
+        area,
+        app,
+        pal,
+        Panel::Projects,
+        block,
+        &cols,
+        false,
+        |w| {
+            rows.iter()
+                .map(|f| {
+                    let mut cells = vec![Cell::from(fit(f.name, w[0])), num(f.now_text.clone())];
+                    if let (Some(b), Some(text)) = (f.before, &f.before_text) {
+                        let delta = f.now - b;
+                        let pct = Change::of(f.now, b).percent;
+                        // A rise reads as a warning unless a rise is the good news.
+                        let tone = if f.better_up { -delta } else { delta };
+                        cells.push(num(text.clone()).style(fg(pal, pal.graph_text)));
+                        cells.push(change_cell(pal, signed_percent(pct, f.now > 0.0), tone));
+                    }
+                    cells
+                })
+                .collect()
+        },
+    );
+}
+
+/// `45s`, `7m`, `2h`.
+fn age(seconds: i64) -> String {
+    match seconds.max(0) {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m", s / 60),
+        s => format!("{}h", s / 3600),
+    }
+}
+
+/// A model name without the vendor prefix, which every row shares.
+fn short_model(model: &str) -> &str {
+    model.strip_prefix("claude-").unwrap_or(model)
+}
+
+fn session_state(now: i64, s: &ActiveSession, pal: &Palette) -> (&'static str, Color) {
+    if now - s.last < LIVE_SECONDS {
+        ("live", pal.color(pal.live))
+    } else {
+        ("idle", pal.color(pal.warn))
+    }
+}
+
+/// Sessions with a message in the last 15 minutes, with state and cost so far.
+pub fn live(frame: &mut Frame, area: Rect, app: &App, data: &Data, pal: &Palette) {
+    let live = &data.live;
+    let focused = app.focus == Panel::Live;
+    let block = panel_block(pal, Panel::Live, "Live sessions", pal.box_proc, focused).title(
+        note_line(
+            pal,
+            &format!(
+                "hour {}  today {}",
+                money(live.hour.cost_usd),
+                money(live.today.cost_usd)
+            ),
+            pal.box_proc,
+        )
+        .right_aligned(),
+    );
+    if live.active.is_empty() {
+        let minutes = ACTIVE_SECONDS / 60;
+        let text = format!("No session has sent a message in the last {minutes} minutes.");
+        return empty(frame, area, pal, block, &text);
+    }
+    let cols = [
+        col("state", Constraint::Length(5), 0),
+        col("project", Constraint::Fill(1), 0),
+        col("model", Constraint::Fill(1), 0),
+        col(">msgs", Constraint::Length(5), 46),
+        col(">cost", Constraint::Length(8), 0),
+        col(">ago", Constraint::Length(4), 0),
+    ];
+    let rows = session_rows(&live.active, app.sort(Panel::Live));
+    let peak = rows.iter().map(|s| s.cost_usd).fold(0.0, f64::max);
+    table(
+        frame,
+        area,
+        app,
+        pal,
+        Panel::Live,
+        block,
+        &cols,
+        true,
+        |w| {
+            rows.iter()
+                .map(|s| {
+                    let (state, color) = session_state(data.now, s, pal);
+                    vec![
+                        Cell::from(state).style(Style::default().fg(color)),
+                        Cell::from(fit(&s.repo, w[1])),
+                        Cell::from(fit(short_model(&s.model), w[2])),
+                        num(s.messages.to_string()),
+                        cost_cell(pal, s.cost_usd, peak),
+                        num(age(data.now - s.last)),
+                    ]
+                })
+                .collect()
+        },
+    );
+}
+
+/// Every session of the range, grouped by day (UTC, newest first): the day
+/// on the first row of its group, then the short session id, project, main
+/// model, messages, tokens and cost of that day.
+pub fn sessions(frame: &mut Frame, area: Rect, app: &App, data: &Data, pal: &Palette) {
+    let focused = app.focus == Panel::Sessions;
+    let block = panel_block(
+        pal,
+        Panel::Sessions,
+        "Sessions per day",
+        pal.box_proc,
+        focused,
+    )
+    .title(note_line(pal, "UTC", pal.box_proc).right_aligned());
+    if data.sessions.is_empty() {
+        return empty(frame, area, pal, block, "No sessions in this range.");
+    }
+    let long = area.width.saturating_sub(2) >= 56;
+    let cols = [
+        col("day", Constraint::Length(if long { 9 } else { 5 }), 0),
+        col("session", Constraint::Length(8), 0),
+        col("project", Constraint::Fill(1), 0),
+        col("model", Constraint::Fill(1), 0),
+        col(">msgs", Constraint::Length(5), 64),
+        col(">tokens", Constraint::Length(7), 64),
+        col(">cost", Constraint::Length(8), 0),
+    ];
+    let rows = session_day_rows(&data.sessions, app.sort(Panel::Sessions));
+    let peak = rows.iter().map(|s| s.cost_usd).fold(0.0, f64::max);
+    let today = data.now.div_euclid(SECONDS_PER_DAY);
+    table(
+        frame,
+        area,
+        app,
+        pal,
+        Panel::Sessions,
+        block,
+        &cols,
+        true,
+        |w| {
+            rows.iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    let first_of_day = i == 0 || rows[i - 1].day != s.day;
+                    let day = if !first_of_day {
+                        Cell::from("")
+                    } else {
+                        let date = date_key(s.day);
+                        let text = if long {
+                            format!("{} {}", WEEKDAYS[weekday(s.day)], &date[5..])
+                        } else {
+                            date[5..].to_string()
+                        };
+                        let style = if s.day == today {
+                            today_style(pal)
+                        } else {
+                            Style::default().add_modifier(Modifier::BOLD)
+                        };
+                        Cell::from(text).style(style)
+                    };
+                    vec![
+                        day,
+                        Cell::from(short_id(&s.id)),
+                        Cell::from(fit(&s.repo, w[2])),
+                        Cell::from(fit(short_model(&s.model), w[3])),
+                        num(s.messages.to_string()),
+                        num(compact(s.tokens)),
+                        cost_cell(pal, s.cost_usd, peak),
+                    ]
+                })
+                .collect()
+        },
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_meter_fills_in_proportion_and_clamps() {
+        let pal = super::super::theme::Theme::Mono.palette(Default::default());
+        let text = |f: f64, w: usize| {
+            let cell = meter(&pal, pal.cpu, f, w);
+            format!("{cell:?}")
+        };
+        assert_eq!(text(0.5, 4).matches(METER).count(), 2);
+        assert_eq!(text(2.0, 2).matches(METER).count(), 2);
+        assert_eq!(text(-1.0, 2).matches(METER_EMPTY).count(), 2);
+    }
+
+    #[test]
+    fn short_model_drops_the_vendor_prefix_only() {
+        assert_eq!(short_model("claude-opus-5"), "opus-5");
+        assert_eq!(short_model("gpt-5-codex"), "gpt-5-codex");
+    }
+
+    #[test]
+    fn age_picks_the_largest_unit() {
+        assert_eq!(age(45), "45s");
+        assert_eq!(age(7 * 60), "7m");
+        assert_eq!(age(2 * 3600 + 5), "2h");
+        assert_eq!(age(-3), "0s");
+    }
+}
