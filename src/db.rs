@@ -73,8 +73,18 @@ fn retry_busy<T>(
     }
 }
 
+/// Before the standard data file is opened, moves in any older database. Other
+/// paths (a test database, say) are never migrated.
+fn migrate_if_standard(path: &Path) {
+    let standard = super::host::state_dir().join("usage.db");
+    if path == standard {
+        super::migrate::run_standard(path);
+    }
+}
+
 /// Open (creating if missing) the usage database at `path`.
 pub fn open_db(path: &Path) -> Result<Connection, String> {
+    migrate_if_standard(path);
     if let Some(parent) = path.parent() {
         ensure_private_dir(parent)
             .map_err(|e| format!("failed to create directory {}: {e}", parent.display()))?;

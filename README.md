@@ -56,27 +56,29 @@ It finds Claude Code history in `~/.claude/projects`, or in `$CLAUDE_CONFIG_DIR/
 
 The tool shares its data and settings with playbook, so both show the same numbers.
 
-State is one SQLite database, `~/.config/playbook/usage.db`, owner-only. The first run moves an older database from `~/.config/playbook/usage/usage.db` or `~/.local/state/playbook-usage/usage.db` into place and renames the old file to `*.migrated`.
+State is one SQLite database, `~/.config/playbook/usage.db` (directory `0700`, file `0600`). Lock and receiver files sit next to it in `~/.config/playbook`. Several processes can use it at once (the terminal view and the receiver); it runs in WAL mode with a busy timeout.
 
-Settings live in `~/.config/playbook/config.json`, in playbook's nested JSON format under the `usage` key. The tool has no config file of its own. Playbook users can also set them with `playbook config set usage.<key> <value>`.
+On the first run, an older database is moved or merged into place, and one line on stderr says so:
 
-```json
-{
-  "usage": {
-    "theme": "default",
-    "weekStart": "monday",
-    "refreshSeconds": 5,
-    "budget": { "monthlyUsd": 200, "weeklyUsd": 50 },
-    "telemetry": "auto",
-    "telemetryRetentionDays": 90,
-    "telemetryMaxRows": 500000
-  }
-}
-```
+- `~/.config/playbook/usage/usage.db` (older playbook) moves up one directory with its `-wal` and `-shm` files.
+- `~/.local/state/playbook-telemetry/usage.db` and `~/.local/state/playbook-usage/usage.db` (older standalone releases, also under `$XDG_STATE_HOME`) are merged in one transaction, keyed on each table's primary key, then renamed to `*.migrated`. Nothing is deleted.
+- If the data file does not exist yet and several old files do, the larger and newer one is moved into place and the others are merged.
+- An old file that cannot be read is skipped with a warning and left untouched.
 
-A missing file or key means the default.
+Settings are playbook's own, from the global tier of its config store (`~/.config/playbook/playbook.db`), and from the nested `usage` object of `~/.config/playbook/config.json` when that store does not exist. The tool has no config file of its own and only reads them. Set them with `playbook config set usage.<key> <value>`. An invalid value is ignored with a warning, and a missing one means the default. An old `~/.config/playbook-telemetry/config.json` is no longer read; the tool names it on stderr if it exists.
 
-This shared location is landing in a coming release. Until then, older releases keep state under `~/.local/state/playbook-telemetry` and read settings from `~/.config/playbook-telemetry/config.json`.
+| Key | Default | Values |
+| --- | --- | --- |
+| `usage.theme` | `default` | `default`, `dark`, `light`, `mono` |
+| `usage.weekStart` | `monday` | `monday`, `sunday`, `saturday` |
+| `usage.refreshSeconds` | `5` | number |
+| `usage.telemetry` | `auto` | `auto`, `off` |
+| `usage.telemetryRetentionDays` | `90` | number, 0 keeps all |
+| `usage.telemetryMaxRows` | `500000` | number, 0 means no limit |
+| `usage.autoIngest` | `true` | true or false |
+| `usage.autoIngestMinutes` | `10` | number |
+| `usage.budget.monthlyUsd` | `0` | number |
+| `usage.budget.weeklyUsd` | `0` | number |
 
 ## Telemetry receiver
 
