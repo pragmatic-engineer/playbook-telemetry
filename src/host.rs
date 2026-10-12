@@ -118,7 +118,7 @@ impl Host for TestHost {
     }
 
     fn state_dir_from(&self, home: &Path) -> PathBuf {
-        home.join(".config/playbook")
+        crate::data::data_dir(home)
     }
 
     fn state_dir(&self) -> PathBuf {

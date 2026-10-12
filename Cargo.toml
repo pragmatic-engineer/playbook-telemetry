@@ -3,7 +3,7 @@
 
 [package]
 name = "playbook-telemetry"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 description = "Token and cost usage dashboard for Claude Code sessions: a terminal view, reports and an optional telemetry receiver"
 license = "Apache-2.0"

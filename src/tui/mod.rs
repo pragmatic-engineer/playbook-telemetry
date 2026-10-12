@@ -50,9 +50,12 @@ fn start_theme(no_color: bool) -> Theme {
 /// Runs the view until the user quits. Restores the terminal on every exit,
 /// including a panic (ratatui installs the hook).
 pub fn run(paths: &Paths, range: Range) -> Result<(), String> {
+    // Nothing may write to stderr while the screen is drawn.
+    crate::say::hold();
     let mut terminal = ratatui::init();
     let result = event_loop(&mut terminal, paths, range);
     ratatui::restore();
+    crate::say::release();
     result.map_err(|e| format!("terminal error: {e}"))
 }
 

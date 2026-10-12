@@ -416,10 +416,10 @@ pub fn run_collect(
         idle: (idle_seconds > 0).then(|| Duration::from_secs(idle_seconds)),
         prune: Some(retention),
     };
-    eprintln!(
+    crate::say::notice(&format!(
         "usage collect: listening on 127.0.0.1:{actual} (pid {})",
         state.pid
-    );
+    ));
     let result = serve(&listener, &conn, &cfg, stop, crate::util::time::now_secs);
     state.pid = 0;
     let _ = write_state(&path, &state);

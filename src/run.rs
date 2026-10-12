@@ -63,7 +63,10 @@ pub fn ingest_new(paths: &Paths) -> Result<(Connection, IngestStats), String> {
     let started = std::time::Instant::now();
     let mut shown = false;
     let stats = ingest_into(paths, &conn, &mut |done, total| {
-        if started.elapsed() >= std::time::Duration::from_secs(2) && total > 0 {
+        if started.elapsed() >= std::time::Duration::from_secs(2)
+            && total > 0
+            && !crate::say::is_held()
+        {
             eprint!("\rindexing {done}/{total} files");
             shown = true;
         }
