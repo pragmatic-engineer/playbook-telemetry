@@ -14,7 +14,7 @@ use super::sort::{
 use super::theme::{ColorDepth, Theme};
 use super::view::{self, help_height};
 use super::worker::DEFAULT_REFRESH_SECONDS;
-use crate::aggregate::SECONDS_PER_DAY;
+
 use crate::period::pair_groups;
 use crate::query::{Range, WeekStart};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -214,7 +214,7 @@ impl App {
             Panel::Live => d.live.active.len(),
             Panel::Sessions => d.sessions.len(),
             Panel::Spend if self.spend_view == SpendView::Daily => {
-                let today = d.now.div_euclid(SECONDS_PER_DAY);
+                let today = crate::tz::day_of(d.now);
                 d.series.iter().filter(|p| p.day <= today).count()
             }
             Panel::Spend | Panel::Tokens => 0,
@@ -281,7 +281,7 @@ impl App {
                 .map(|s| format!("{}/{}", s.day, s.id))
                 .collect(),
             Panel::Spend if self.spend_view == SpendView::Daily => {
-                let today = d.now.div_euclid(SECONDS_PER_DAY);
+                let today = crate::tz::day_of(d.now);
                 day_rows(&d.series, today, sort)
                     .iter()
                     .map(|p| p.day.to_string())
@@ -365,10 +365,7 @@ impl App {
             return;
         };
         let last = plot.bars.len().saturating_sub(1);
-        let today = self
-            .data
-            .as_ref()
-            .map_or(0, |d| d.now.div_euclid(SECONDS_PER_DAY));
+        let today = self.data.as_ref().map_or(0, |d| crate::tz::day_of(d.now));
         let at = self
             .cursor
             .and_then(|d| plot.index_of(d))

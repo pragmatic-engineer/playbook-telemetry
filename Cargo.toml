@@ -23,6 +23,7 @@ name = "pbtop"
 path = "src/bin/pbtop.rs"
 
 [dependencies]
+chrono = { version = "=0.4.41", default-features = false, features = ["clock", "std"] }
 clap = { version = "=4.6.6", features = ["derive"] }
 libc = "=0.2.189"
 ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm"] }

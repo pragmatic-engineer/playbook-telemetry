@@ -79,6 +79,7 @@ pub fn data_json(
 
     json!({
         "generated_at": now,
+        "time_zone": crate::tz::json(now),
         "range": range_json(range, now, usage),
         "totals": {
             "messages": totals.messages,

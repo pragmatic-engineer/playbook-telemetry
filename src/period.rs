@@ -101,10 +101,10 @@ impl Period {
             }
         };
         let current = Span {
-            start: first * SECONDS_PER_DAY,
+            start: crate::tz::day_start(first),
             end: now + 1,
         };
-        let previous_start = previous_first * SECONDS_PER_DAY;
+        let previous_start = crate::tz::day_start(previous_first);
         let previous = Span {
             start: previous_start,
             end: (previous_start + current.seconds()).min(current.start),

@@ -17,7 +17,7 @@ use super::sort::{
 };
 use super::theme::{Fill, Ink, Palette};
 use super::view::{visible_rows, window_start};
-use crate::aggregate::{date_key, SECONDS_PER_DAY};
+use crate::aggregate::date_key;
 use crate::period::Change;
 use crate::query::{short_id, weekday, ActiveSession, Range, ACTIVE_SECONDS};
 use crate::telemetry_db::{Health, ToolStat};
@@ -418,7 +418,7 @@ fn chart_panel(frame: &mut Frame, area: Rect, app: &App, data: &Data, pal: &Pale
         fill,
         stack: stacked.then_some(&data.slots),
         cursor: app.cursor.and_then(|day| plot.index_of(day)),
-        today: data.now.div_euclid(SECONDS_PER_DAY),
+        today: crate::tz::day_of(data.now),
     };
     chart::render(frame.buffer_mut(), &plot, &data.series, &view, pal);
 }
@@ -444,7 +444,7 @@ pub fn peak_style(pal: &Palette) -> Style {
 /// One row for each day up to today: date, messages, tokens, cost and the model
 /// that cost the most. Today and the peak day are marked.
 fn daily_table(frame: &mut Frame, area: Rect, app: &App, data: &Data, pal: &Palette) {
-    let today = data.now.div_euclid(SECONDS_PER_DAY);
+    let today = crate::tz::day_of(data.now);
     let mut block = view_block(pal, app, area, Panel::Spend, "Daily cost", pal.box_cpu);
     let edge = fg(pal, pal.box_cpu);
     block = block.title_bottom(
@@ -1101,7 +1101,7 @@ pub fn live(frame: &mut Frame, area: Rect, app: &App, data: &Data, pal: &Palette
     );
 }
 
-/// Every session of the range, grouped by day (UTC, newest first): the day
+/// Every session of the range, grouped by day (newest first): the day
 /// on the first row of its group, then the short session id, project, main
 /// model, messages, tokens and cost of that day.
 pub fn sessions(frame: &mut Frame, area: Rect, app: &App, data: &Data, pal: &Palette) {
@@ -1113,7 +1113,7 @@ pub fn sessions(frame: &mut Frame, area: Rect, app: &App, data: &Data, pal: &Pal
         pal.box_proc,
         focused,
     )
-    .title(note_line(pal, "UTC", pal.box_proc).right_aligned());
+    .title(note_line(pal, &crate::tz::short(data.now), pal.box_proc).right_aligned());
     if data.sessions.is_empty() {
         return empty(frame, area, pal, block, "No sessions in this range.");
     }
@@ -1129,7 +1129,7 @@ pub fn sessions(frame: &mut Frame, area: Rect, app: &App, data: &Data, pal: &Pal
     ];
     let rows = session_day_rows(&data.sessions, app.sort(Panel::Sessions));
     let peak = rows.iter().map(|s| s.cost_usd).fold(0.0, f64::max);
-    let today = data.now.div_euclid(SECONDS_PER_DAY);
+    let today = crate::tz::day_of(data.now);
     table(
         frame,
         area,

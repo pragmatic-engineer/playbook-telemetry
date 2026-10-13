@@ -59,10 +59,11 @@ pub fn render_range(
     let (usage, tools) = in_range(usage, tools, now, range);
     let scope = match range.days(now) {
         Some((first, past)) => format!(
-            "in {} ({} to {}, UTC)",
+            "in {} ({} to {}, {})",
             range.label(),
             date_key(first),
-            date_key(past - 1)
+            date_key(past - 1),
+            crate::tz::label()
         ),
         None => "across all recorded sessions".to_string(),
     };
@@ -91,11 +92,12 @@ fn signed(change: Change, decimals: usize) -> String {
 fn comparison_text(c: &Comparison) -> String {
     let w = c.windows;
     let mut out = format!(
-        "\nCompared with {} (the same {}, {} to {} UTC)\n",
+        "\nCompared with {} (the same {}, {} to {} {})\n",
         c.period.previous_label(),
         elapsed_text(w.current.seconds()),
         date_key(day_of(w.previous.start)),
         date_key(day_of(w.previous.end - 1)),
+        crate::tz::label(),
     );
     let rows = [
         (
@@ -142,6 +144,11 @@ fn scoped(usage: &[UsageEvent], tools: &[ToolInvocationEvent], scope: &str) -> S
         usage.len(),
         total_cost
     );
+    let _ = writeln!(
+        out,
+        "Times and days are in {}.",
+        crate::tz::describe(crate::util::time::now_secs())
+    );
     let (unpriced, models) = unpriced_models(usage);
     if unpriced > 0 {
         let _ = writeln!(
@@ -155,7 +162,7 @@ fn scoped(usage: &[UsageEvent], tools: &[ToolInvocationEvent], scope: &str) -> S
     let recent = days.len().saturating_sub(RECENT_DAYS);
     group_table(
         &mut out,
-        &format!("day (UTC, last {RECENT_DAYS})"),
+        &format!("day ({}, last {RECENT_DAYS})", crate::tz::label()),
         &days[recent..],
     );
     for dim in [

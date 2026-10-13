@@ -59,7 +59,7 @@ pbtop prune --dry-run # say what old telemetry rows would be removed
 
 `playbook-telemetry` takes the same arguments and is the long name for scripts. `pbtop --help` and `pbtop --version` print `pbtop`, and the long name prints `playbook-telemetry`.
 
-Days are UTC. Weeks start on Monday unless `usage.weekStart` says otherwise.
+Times and days use your local time zone by default, daylight saving included, and a day runs from local midnight to local midnight. Every view says which zone it uses: the footer of the terminal view reads `local time (UTC+10)` or `UTC`, the text summary opens with `Times and days are in ...`, and `--json` carries a `time_zone` object with the `mode`, the `offset_seconds` and a `label`. To use UTC instead, pass `--utc` (or `--local` to force the default), set `PLAYBOOK_TELEMETRY_TZ=utc`, or run `playbook config set usage.timeZone utc`. The flag beats the environment variable, which beats the setting. A value that is not `local` or `utc` is ignored with a warning. Weeks start on Monday unless `usage.weekStart` says otherwise.
 
 It finds Claude Code history in `~/.claude/projects`, or in `$CLAUDE_CONFIG_DIR/projects` when that variable is set.
 
@@ -83,6 +83,7 @@ Settings are playbook's own, from the global tier of its config store (`~/.confi
 | --- | --- | --- |
 | `usage.theme` | `default` | `default`, `dark`, `light`, `mono` |
 | `usage.weekStart` | `monday` | `monday`, `sunday`, `saturday` |
+| `usage.timeZone` | `local` | `local`, `utc` |
 | `usage.refreshSeconds` | `5` | number |
 | `usage.telemetry` | `auto` | `auto`, `off` |
 | `usage.telemetryRetentionDays` | `90` | number, 0 keeps all |

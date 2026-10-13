@@ -303,22 +303,27 @@ fn refresh_status(app: &App, pal: &Palette, area_width: u16) -> (String, Style) 
         // The telemetry state and the interval go first when the line is short.
         Some(d) if area_width >= 130 => (
             format!(
-                "{}  updated {} UTC, every {}s ",
+                "{}  updated {} {}, every {}s ",
                 app.telemetry.map_or("", |m| m.footer()),
                 clock(d.now),
+                crate::tz::describe(d.now),
                 app.refresh_every.as_secs()
             ),
             dim,
         ),
         Some(d) if area_width >= 100 => (
             format!(
-                "updated {} UTC, every {}s ",
+                "updated {} {}, every {}s ",
                 clock(d.now),
+                crate::tz::describe(d.now),
                 app.refresh_every.as_secs()
             ),
             dim,
         ),
-        Some(d) => (format!("updated {} UTC ", clock(d.now)), dim),
+        Some(d) => (
+            format!("updated {} {} ", clock(d.now), crate::tz::short(d.now)),
+            dim,
+        ),
         None => (String::new(), dim),
     }
 }

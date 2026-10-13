@@ -71,13 +71,13 @@ pub fn date_key(days: i64) -> String {
 }
 
 fn day_key(timestamp: i64) -> String {
-    date_key(timestamp.div_euclid(SECONDS_PER_DAY))
+    date_key(crate::tz::day_of(timestamp))
 }
 
 /// The Monday starting the week containing `timestamp`. 1970-01-01 was a
 /// Thursday, so day 0 is weekday index 3 with Monday as 0.
 fn week_key(timestamp: i64) -> String {
-    let days = timestamp.div_euclid(SECONDS_PER_DAY);
+    let days = crate::tz::day_of(timestamp);
     let weekday = (days + 3).rem_euclid(7);
     date_key(days - weekday)
 }

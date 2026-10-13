@@ -320,10 +320,8 @@ pub fn describe(l: &Limit, now: i64) -> String {
         State::Under => "under".to_string(),
         State::OnTrack => "on track".to_string(),
         State::WillExceed { at } => format!(
-            "will exceed at about {} UTC",
-            crate::util::time::iso_utc(at)
-                .replace('T', " ")
-                .trim_end_matches('Z')
+            "will exceed at about {}",
+            crate::tz::iso(at).replace('T', " ")
         ),
     };
     format!(

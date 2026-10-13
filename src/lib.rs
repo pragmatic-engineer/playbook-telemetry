@@ -39,6 +39,7 @@ pub mod telemetry_db;
 pub mod telemetry_detect;
 pub mod telemetry_status;
 pub mod tui;
+pub mod tz;
 pub mod util;
 pub mod warm;
 

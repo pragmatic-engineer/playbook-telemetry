@@ -248,7 +248,7 @@ pub fn status(paths: &Paths, retention: Retention) -> Result<Status, String> {
 impl Status {
     /// The text a person reads.
     pub fn text(&self, now: i64) -> String {
-        use crate::util::time::iso_utc;
+        use crate::tz::iso as iso_utc;
         let mut lines = vec![self.telemetry.clone()];
         if let Some(fix) = &self.telemetry_fix {
             lines.push(format!("fix: {fix}"));
