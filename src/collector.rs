@@ -248,7 +248,7 @@ pub fn status(paths: &Paths, retention: Retention) -> Result<Status, String> {
 impl Status {
     /// The text a person reads.
     pub fn text(&self, now: i64) -> String {
-        use crate::util::time::iso_utc;
+        use crate::tz::iso;
         let mut lines = vec![self.telemetry.clone()];
         if let Some(fix) = &self.telemetry_fix {
             lines.push(format!("fix: {fix}"));
@@ -259,7 +259,7 @@ impl Status {
                     "collector: running (pid {pid}) on 127.0.0.1:{port}"
                 ));
                 if let Some(t) = self.started_at {
-                    lines.push(format!("started: {}", iso_utc(t)));
+                    lines.push(format!("started: {}", iso(t)));
                 }
                 lines.push(match self.idle_seconds {
                     Some(0) | None => "idle shutdown: never".to_string(),
@@ -296,7 +296,7 @@ impl Status {
         lines.push(match self.last_event {
             Some(t) => format!(
                 "last event: {} ({} ago)",
-                iso_utc(t),
+                iso(t),
                 age(now.saturating_sub(t))
             ),
             None => "last event: none".to_string(),

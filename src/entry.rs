@@ -71,6 +71,7 @@ pub fn run(
     // Every command starts from a data file that exists (created owner-only,
     // with older data moved in first), so no command errors on a fresh home.
     // This runs before the terminal view takes over the screen.
+    super::tz::ensure_init();
     super::db::open_db(&paths.db).map(drop)?;
     match sub {
         Some(UsageCommand::Ingest) => Err(INGEST_REMOVED.to_string()),

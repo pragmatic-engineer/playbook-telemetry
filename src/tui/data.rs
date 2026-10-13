@@ -6,7 +6,7 @@
 //! (`usage::query`), so both views report the same numbers.
 
 use super::theme::SERIES;
-use crate::aggregate::{group_usage, unpriced_models, Dimension, Group, SECONDS_PER_DAY};
+use crate::aggregate::{group_usage, unpriced_models, Dimension, Group};
 use crate::db;
 use crate::limits::{Burn, Limit, Origin, State};
 use crate::limits_source::{self, Snapshot};
@@ -178,7 +178,7 @@ pub struct Data {
     pub range: Range,
     pub filter: String,
     pub totals: Totals,
-    /// Per UTC day, oldest first. Idle days are absent.
+    /// Per day, oldest first. Idle days are absent.
     pub days: Vec<Group>,
     pub models: Vec<Group>,
     /// The models of the previous span of a period, empty for other ranges.
@@ -186,7 +186,7 @@ pub struct Data {
     /// The series color of each model.
     pub slots: Slots,
     pub repos: Vec<Group>,
-    /// Sessions in the range, one row per session and UTC day.
+    /// Sessions in the range, one row per session and day.
     pub sessions: Vec<SessionDay>,
     /// Messages in the range whose model has no price (counted as $0).
     pub unpriced: usize,
@@ -218,7 +218,7 @@ const TREND_DAYS: i64 = 7;
 /// One point per day from the range start (or the first event, for all time)
 /// to the end of the range (today for all time), so the graph axis is a real calendar.
 fn day_series(events: &[UsageEvent], now: i64, range: Range) -> Vec<DayPoint> {
-    let today = now.div_euclid(SECONDS_PER_DAY);
+    let today = crate::tz::day_of(now);
     let mut per_day: BTreeMap<i64, DayAcc> = BTreeMap::new();
     for e in events {
         let slot = per_day.entry(query::day_of(e.timestamp)).or_default();
@@ -301,7 +301,7 @@ impl Data {
         };
         let series = match range {
             Range::Today => {
-                let first = (now.div_euclid(SECONDS_PER_DAY) - TREND_DAYS + 1) * SECONDS_PER_DAY;
+                let first = crate::tz::day_start(crate::tz::day_of(now) - TREND_DAYS + 1);
                 let trend: Vec<UsageEvent> = window
                     .iter()
                     .filter(|e| e.timestamp >= first && matches(e, filter))
@@ -341,12 +341,12 @@ impl Data {
 /// of the trend, whichever is earliest.
 fn window_start(range: Range, now: i64) -> Option<i64> {
     let (first_day, _) = range.days(now)?;
-    let mut start = first_day * SECONDS_PER_DAY;
+    let mut start = crate::tz::day_start(first_day);
     if let Some(period) = Period::of_range(range) {
         start = start.min(period.windows(now).previous.start);
     }
     if range == Range::Today {
-        start = start.min((first_day - TREND_DAYS + 1) * SECONDS_PER_DAY);
+        start = start.min(crate::tz::day_start(first_day - TREND_DAYS + 1));
     }
     Some(start)
 }

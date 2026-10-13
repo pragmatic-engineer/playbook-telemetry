@@ -218,7 +218,11 @@ pub fn render(frame: &mut Frame, view: &SessionsView, pal: &Palette, now: i64) {
         ),
         Span::styled("\u{251c}", box_ink),
     ]);
-    let note = Line::styled(format!("order: {}  UTC", view.order.label()), dim).right_aligned();
+    let note = Line::styled(
+        format!("order: {}  {}", view.order.label(), crate::tz::short(now)),
+        dim,
+    )
+    .right_aligned();
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(box_ink)
@@ -326,8 +330,9 @@ fn footer_line(view: &SessionsView, pal: &Palette, now: i64) -> Line<'static> {
     let status = match (&view.error, view.read_at) {
         (Some(e), _) => format!(" refresh failed: {e}"),
         (None, Some(at)) => format!(
-            " updated {} UTC, every {REFRESH_SECONDS}s, {} ago",
+            " updated {} {}, every {REFRESH_SECONDS}s, {} ago",
             clock(at),
+            crate::tz::describe(at),
             age(at, now)
         ),
         (None, None) => String::new(),

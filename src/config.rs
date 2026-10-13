@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub const KEYS: &[&str] = &[
     "usage.theme",
     "usage.weekStart",
+    "usage.timeZone",
     "usage.refreshSeconds",
     "usage.telemetry",
     "usage.telemetryRetentionDays",
@@ -33,6 +34,7 @@ pub fn default_value(key: &str) -> Option<Value> {
     Some(match key {
         "usage.theme" => Value::from("default"),
         "usage.weekStart" => Value::from("monday"),
+        "usage.timeZone" => Value::from("local"),
         "usage.refreshSeconds" => Value::from(5),
         "usage.telemetry" => Value::from("auto"),
         "usage.autoIngest" => Value::from(true),
@@ -49,6 +51,7 @@ pub fn allowed_values(key: &str) -> Option<&'static [&'static str]> {
     match key {
         "usage.theme" => Some(&["default", "dark", "light", "mono"]),
         "usage.weekStart" => Some(&["monday", "sunday", "saturday"]),
+        "usage.timeZone" => Some(&["local", "utc"]),
         "usage.telemetry" => Some(&["auto", "off"]),
         _ => None,
     }

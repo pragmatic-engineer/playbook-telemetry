@@ -5,7 +5,7 @@
 //! and the live summary. `--json` turns these into JSON (`api.rs`) and
 //! the terminal view draws them, so a number is computed in one place only.
 
-use super::aggregate::{civil_from_days, SECONDS_PER_DAY};
+use super::aggregate::civil_from_days;
 use super::db;
 use super::{ToolInvocationEvent, UsageEvent};
 use rusqlite::Connection;
@@ -62,8 +62,9 @@ pub fn weekday(day: i64) -> usize {
     (day + 3).rem_euclid(7) as usize
 }
 
-/// The date window both views show. Days are UTC, so there is no daylight
-/// saving: every day is exactly 86,400 seconds and a week is exactly 7 days.
+/// The date window both views show. Days are in the chosen time zone (`tz`), so
+/// with daylight saving a day can be 23 or 25 hours long; use `tz::day_start`
+/// for a day boundary, never `day * 86_400`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Range {
     Today,
@@ -136,11 +137,11 @@ impl Range {
         }
     }
 
-    /// First and one-past-last UTC day, or `None` for all time. "Last N days"
+    /// First and one-past-last day, or `None` for all time. "Last N days"
     /// includes today; a month runs from its 1st to its last day; a week runs
     /// seven days from its first day.
     pub fn days(self, now: i64) -> Option<(i64, i64)> {
-        let today = now.div_euclid(SECONDS_PER_DAY);
+        let today = crate::tz::day_of(now);
         match self {
             Range::All => None,
             Range::Today => Some((today, today + 1)),
@@ -181,7 +182,7 @@ pub(super) fn month_first_day(day: i64) -> i64 {
 }
 
 pub fn day_of(timestamp: i64) -> i64 {
-    timestamp.div_euclid(SECONDS_PER_DAY)
+    crate::tz::day_of(timestamp)
 }
 
 pub fn in_window(window: Option<(i64, i64)>, timestamp: i64) -> bool {
@@ -249,9 +250,7 @@ pub fn in_range(
 /// every row.
 pub fn load_window(conn: &Connection, range: Range, now: i64) -> Result<Vec<UsageEvent>, String> {
     match range.days(now) {
-        Some((first_day, _)) => {
-            db::load_usage_events_since(conn, first_day.saturating_mul(SECONDS_PER_DAY))
-        }
+        Some((first_day, _)) => db::load_usage_events_since(conn, crate::tz::day_start(first_day)),
         None => db::load_usage_events(conn),
     }
 }
@@ -347,10 +346,7 @@ pub fn load_health(conn: &Connection, range: Range, now: i64) -> Result<HealthVi
 
 fn window_seconds(range: Range, now: i64) -> (i64, i64) {
     match range.days(now) {
-        Some((first, past)) => (
-            first.saturating_mul(SECONDS_PER_DAY),
-            past.saturating_mul(SECONDS_PER_DAY),
-        ),
+        Some((first, past)) => (crate::tz::day_start(first), crate::tz::day_start(past)),
         None => (i64::MIN, i64::MAX),
     }
 }
@@ -368,10 +364,10 @@ pub fn hour_start(now: i64) -> i64 {
     (now.div_euclid(60) - (BURN_MINUTES - 1)) * 60
 }
 
-/// The oldest timestamp the live summary needs: the start of today (UTC) or
+/// The oldest timestamp the live summary needs: the start of today or
 /// of the last hour, whichever is earlier.
 pub fn live_window_start(now: i64) -> i64 {
-    hour_start(now).min(now.div_euclid(SECONDS_PER_DAY) * SECONDS_PER_DAY)
+    hour_start(now).min(crate::tz::day_start(crate::tz::day_of(now)))
 }
 
 /// Ids of sessions with a message in the last 15 minutes, newest first.
@@ -409,7 +405,7 @@ impl Spend {
     }
 }
 
-/// One session's activity on one UTC day. A session that runs past midnight
+/// One session's activity on one day. A session that runs past midnight
 /// has a row for each day it was active.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionDay {
@@ -506,10 +502,9 @@ pub struct LiveView {
     pub feed: Vec<UsageEvent>,
 }
 
-/// `HH:MM:SS` of a UTC timestamp.
+/// `HH:MM:SS` of a timestamp in the chosen time zone.
 pub fn clock(timestamp: i64) -> String {
-    let s = timestamp.rem_euclid(SECONDS_PER_DAY);
-    format!("{:02}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
+    crate::tz::clock(timestamp)
 }
 
 /// Builds the live view. `window` holds every event since `live_window_start`,
@@ -521,7 +516,7 @@ pub fn live_view(
     latest: &[UsageEvent],
     now: i64,
 ) -> LiveView {
-    let today_start = now.div_euclid(SECONDS_PER_DAY) * SECONDS_PER_DAY;
+    let today_start = crate::tz::day_start(crate::tz::day_of(now));
     let hour: Vec<&UsageEvent> = window
         .iter()
         .filter(|e| e.timestamp >= hour_start(now))
@@ -605,6 +600,7 @@ pub fn load_live(conn: &Connection, now: i64) -> Result<LiveView, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aggregate::SECONDS_PER_DAY;
 
     const NOW: i64 = 1_788_400_000;
 

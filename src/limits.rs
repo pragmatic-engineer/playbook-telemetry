@@ -74,7 +74,12 @@ impl LimitPeriod {
             LimitPeriod::Daily => end - SECONDS_PER_DAY,
             LimitPeriod::Weekly | LimitPeriod::SevenDay => end - 7 * SECONDS_PER_DAY,
             LimitPeriod::FiveHour => end - 5 * 3600,
-            LimitPeriod::Monthly => month_first_day(day_of(end - 1)) * SECONDS_PER_DAY,
+            LimitPeriod::Monthly => {
+                // `end` is a reset time chosen by the server, not a local
+                // calendar boundary, so its month is found in UTC.
+                let utc = crate::tz::Zone::Utc;
+                utc.day_start(month_first_day(utc.day_of(end - 1)))
+            }
         };
         (start, end)
     }
@@ -99,7 +104,7 @@ impl LimitPeriod {
                 )
             }
         };
-        (first * SECONDS_PER_DAY, past * SECONDS_PER_DAY)
+        (crate::tz::day_start(first), crate::tz::day_start(past))
     }
 }
 

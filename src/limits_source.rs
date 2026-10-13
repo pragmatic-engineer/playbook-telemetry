@@ -320,10 +320,8 @@ pub fn describe(l: &Limit, now: i64) -> String {
         State::Under => "under".to_string(),
         State::OnTrack => "on track".to_string(),
         State::WillExceed { at } => format!(
-            "will exceed at about {} UTC",
-            crate::util::time::iso_utc(at)
-                .replace('T', " ")
-                .trim_end_matches('Z')
+            "will exceed at about {}",
+            crate::tz::iso(at).replace('T', " ")
         ),
     };
     format!(
@@ -346,7 +344,7 @@ pub fn summary_section(
     week: WeekStart,
 ) -> String {
     let limits = all_limits(snapshot, budgets, events, now, week);
-    let mut out = String::from("\nLimits and burn rate (UTC)\n");
+    let mut out = format!("\nLimits and burn rate ({})\n", crate::tz::label());
     if limits.is_empty() {
         out.push_str(&format!("  {UNKNOWN_HINT}\n"));
     }

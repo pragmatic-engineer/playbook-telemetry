@@ -3,8 +3,9 @@
 
 //! The period comparison: today, this week and this month, each against the
 //! one before it over the same elapsed span, so a Thursday is never compared
-//! with a whole week. Every boundary is a UTC second, so no local time zone or
-//! daylight saving enters.
+//! with a whole week. Boundaries are instants at midnight of the chosen time zone
+//! (`tz::day_start`), so a daylight saving change can make a day 23 or 25
+//! hours long, and the previous span is matched by wall clock, not seconds.
 
 use super::aggregate::{Group, SECONDS_PER_DAY};
 use super::query::{day_of, month_first_day, week_first_day, Range, Totals, WeekStart};
@@ -101,19 +102,22 @@ impl Period {
             }
         };
         let current = Span {
-            start: first * SECONDS_PER_DAY,
+            start: crate::tz::day_start(first),
             end: now + 1,
         };
-        let previous_start = previous_first * SECONDS_PER_DAY;
+        // The previous span ends at the same wall clock time into its period,
+        // so a daylight saving change between the two does not shift it.
+        let into_day = now + 1 - crate::tz::day_start(today);
+        let matched = crate::tz::day_start(previous_first + (today - first)) + into_day;
         let previous = Span {
-            start: previous_start,
-            end: (previous_start + current.seconds()).min(current.start),
+            start: crate::tz::day_start(previous_first),
+            end: matched.min(current.start),
         };
         Windows { current, previous }
     }
 }
 
-/// A half open span of UTC seconds.
+/// A half open span of seconds since the epoch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub start: i64,

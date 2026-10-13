@@ -45,7 +45,12 @@ fn tool_list(out: &mut String, title: &str, counts: &[(String, u64)]) {
 }
 
 pub fn render(usage: &[UsageEvent], tools: &[ToolInvocationEvent]) -> String {
-    scoped(usage, tools, "across all recorded sessions")
+    scoped(
+        usage,
+        tools,
+        "across all recorded sessions",
+        crate::util::time::now_secs(),
+    )
 }
 
 /// The report for the events inside `range`, with its dates in the heading.
@@ -59,10 +64,11 @@ pub fn render_range(
     let (usage, tools) = in_range(usage, tools, now, range);
     let scope = match range.days(now) {
         Some((first, past)) => format!(
-            "in {} ({} to {}, UTC)",
+            "in {} ({} to {}, {})",
             range.label(),
             date_key(first),
-            date_key(past - 1)
+            date_key(past - 1),
+            crate::tz::label()
         ),
         None => "across all recorded sessions".to_string(),
     };
@@ -72,7 +78,7 @@ pub fn render_range(
             scope.replace("across all recorded sessions", "recorded")
         );
     }
-    let mut out = scoped(&usage, &tools, &scope);
+    let mut out = scoped(&usage, &tools, &scope, now);
     if let Some(period) = Period::of_range(range) {
         out.push_str(&comparison_text(&Comparison::of(all_usage, now, period)));
     }
@@ -91,11 +97,12 @@ fn signed(change: Change, decimals: usize) -> String {
 fn comparison_text(c: &Comparison) -> String {
     let w = c.windows;
     let mut out = format!(
-        "\nCompared with {} (the same {}, {} to {} UTC)\n",
+        "\nCompared with {} (the same {}, {} to {} {})\n",
         c.period.previous_label(),
         elapsed_text(w.current.seconds()),
         date_key(day_of(w.previous.start)),
         date_key(day_of(w.previous.end - 1)),
+        crate::tz::label(),
     );
     let rows = [
         (
@@ -130,7 +137,7 @@ fn comparison_text(c: &Comparison) -> String {
     out
 }
 
-fn scoped(usage: &[UsageEvent], tools: &[ToolInvocationEvent], scope: &str) -> String {
+fn scoped(usage: &[UsageEvent], tools: &[ToolInvocationEvent], scope: &str, now: i64) -> String {
     if usage.is_empty() && tools.is_empty() {
         return format!("{EMPTY_MESSAGE}\n");
     }
@@ -142,6 +149,7 @@ fn scoped(usage: &[UsageEvent], tools: &[ToolInvocationEvent], scope: &str) -> S
         usage.len(),
         total_cost
     );
+    let _ = writeln!(out, "Times and days are in {}.", crate::tz::describe(now));
     let (unpriced, models) = unpriced_models(usage);
     if unpriced > 0 {
         let _ = writeln!(
@@ -155,7 +163,7 @@ fn scoped(usage: &[UsageEvent], tools: &[ToolInvocationEvent], scope: &str) -> S
     let recent = days.len().saturating_sub(RECENT_DAYS);
     group_table(
         &mut out,
-        &format!("day (UTC, last {RECENT_DAYS})"),
+        &format!("day ({}, last {RECENT_DAYS})", crate::tz::label()),
         &days[recent..],
     );
     for dim in [

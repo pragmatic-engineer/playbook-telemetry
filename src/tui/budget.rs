@@ -30,7 +30,7 @@ fn fg(pal: &Palette, ink: Ink) -> Style {
     Style::default().fg(pal.color(ink))
 }
 
-/// `10-12 09:30` for a UTC second.
+/// `10-12 09:30` for a second, in the chosen time zone.
 fn stamp(at: i64) -> String {
     let date = date_key(day_of(at));
     format!("{} {}", &date[5..], &clock(at)[..5])
@@ -111,7 +111,10 @@ fn state_seg(pal: &Palette, l: &Limit, now: i64) -> (Seg, Option<State>) {
     };
     let (text, ink) = match h.state {
         State::Exceeded => ("limit reached".to_string(), pal.error),
-        State::WillExceed { at } => (format!("will exceed ~{} UTC", stamp(at)), pal.error),
+        State::WillExceed { at } => (
+            format!("will exceed ~{} {}", stamp(at), crate::tz::label()),
+            pal.error,
+        ),
         State::OnTrack => ("on track".to_string(), pal.warn),
         State::Under => ("under".to_string(), pal.live),
         State::Unknown => ("too early to project".to_string(), pal.inactive),
@@ -196,7 +199,7 @@ fn limit_line(pal: &Palette, l: &Limit, now: i64, stale: bool, width: usize) -> 
     }
     segs.push(Seg::text(
         7,
-        format!("resets {} UTC", stamp(l.end)),
+        format!("resets {} {}", stamp(l.end), crate::tz::label()),
         fg(pal, pal.graph_text),
     ));
     join(segs, width)
@@ -253,9 +256,9 @@ pub fn render(frame: &mut Frame, area: Rect, data: &Data, pal: &Palette) {
             Span::styled("\u{251c}", edge),
         ]));
     let note = if more > 0 {
-        format!("UTC  +{more} more in --json")
+        format!("{}  +{more} more in --json", crate::tz::label())
     } else {
-        "UTC  all projects".to_string()
+        format!("{}  all projects", crate::tz::label())
     };
     block = block.title(
         Line::from(vec![
