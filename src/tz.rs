@@ -13,11 +13,11 @@
 //! environment variable, the `usage.timeZone` setting, then `local`. A value
 //! that is not one of those two is ignored with a notice, never a panic.
 
-use std::sync::atomic::{AtomicI64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, Ordering};
 
 use chrono::{Local, Offset, TimeZone};
 
-const SECONDS_PER_DAY: i64 = 86_400;
+use crate::aggregate::SECONDS_PER_DAY;
 
 /// The environment variable that overrides the stored setting.
 pub const ENV_VAR: &str = "PLAYBOOK_TELEMETRY_TZ";
@@ -212,7 +212,7 @@ pub fn describe(ts: i64) -> String {
     current().describe(ts)
 }
 
-/// The zone as a JSON object: the `mode` (`utc` or `local`), the `offset` at
+/// The zone as a JSON object: the `mode` (`utc` or `local`), the `offset_seconds` at
 /// `ts` in seconds east of UTC, and the human `label`.
 pub fn json(ts: i64) -> serde_json::Value {
     json_for(current(), ts)
@@ -250,15 +250,45 @@ pub fn choose(
     if let Some(text) = env.filter(|t| !t.trim().is_empty()) {
         match Zone::parse(text) {
             Some(zone) => return zone,
-            None => warn(&format!("ignoring {ENV_VAR}={text}: use `local` or `utc`")),
+            None => warn(&format!(
+                "ignoring {ENV_VAR}={}: use `local` or `utc`",
+                shown(text)
+            )),
         }
     }
-    setting.and_then(Zone::parse).unwrap_or(Zone::Local)
+    match setting {
+        Some(text) => Zone::parse(text).unwrap_or_else(|| {
+            warn(&format!(
+                "ignoring {SETTING}={}: use `local` or `utc`",
+                shown(text)
+            ));
+            Zone::Local
+        }),
+        None => Zone::Local,
+    }
+}
+
+/// `text` quoted with control characters escaped and cut to 32 characters, so
+/// a hostile value cannot write escape codes to the terminal.
+fn shown(text: &str) -> String {
+    let short: String = text.chars().take(32).collect();
+    format!("{short:?}")
+}
+
+static INITIALISED: AtomicBool = AtomicBool::new(false);
+
+/// Runs `init(None)` unless `init` already ran, for programs that embed the
+/// library and call `entry::run` without going through `cli::main`.
+pub fn ensure_init() {
+    if !INITIALISED.load(Ordering::Relaxed) {
+        init(None);
+    }
 }
 
 /// Chooses the zone from the real environment and the stored setting and
 /// installs it.
 pub fn init(flag: Option<Zone>) {
+    INITIALISED.store(true, Ordering::Relaxed);
     let env = std::env::var(ENV_VAR).ok();
     let setting = crate::host::config_value_now(SETTING);
     let zone = choose(
@@ -413,8 +443,56 @@ mod tests {
     }
 
     #[test]
-    fn an_invalid_setting_falls_back_to_local() {
-        let mut none = |_: &str| {};
-        assert_eq!(choose(None, None, Some("mars"), &mut none), Zone::Local);
+    fn an_invalid_setting_warns_and_falls_back_to_local() {
+        let mut seen = Vec::new();
+        let zone = choose(None, None, Some("mars"), &mut |m| seen.push(m.to_string()));
+        assert_eq!(zone, Zone::Local);
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].contains("usage.timeZone"), "{seen:?}");
+    }
+
+    #[test]
+    fn a_hostile_value_is_escaped_and_cut_in_the_warning() {
+        let mut seen = Vec::new();
+        let long = format!("\u{1b}[2J{}", "x".repeat(100));
+        choose(None, Some(&long), None, &mut |m| seen.push(m.to_string()));
+        assert!(!seen[0].contains('\u{1b}'), "{:?}", seen[0]);
+        assert!(seen[0].len() < 120, "{}", seen[0].len());
+    }
+
+    /// Offset -3h until local midnight of day 100 (a clock that jumps at
+    /// 00:00), then -2h: local midnight does not exist on that day.
+    fn midnight_spring(ts: i64) -> i64 {
+        if ts < 100 * SECONDS_PER_DAY + 3 * 3600 {
+            -3 * 3600
+        } else {
+            -2 * 3600
+        }
+    }
+
+    #[test]
+    fn a_day_whose_midnight_does_not_exist_starts_at_the_first_instant_after_the_jump() {
+        let start = day_start_with(&midnight_spring, 100);
+        assert_eq!(day_of_with(&midnight_spring, start), 100);
+        assert_eq!(day_of_with(&midnight_spring, start - 1), 99);
+    }
+
+    /// The fall back at midnight: -2h until local 00:00 of day 100, then -3h,
+    /// so local 23:00 to 00:00 happens twice.
+    fn midnight_fall(ts: i64) -> i64 {
+        if ts < 100 * SECONDS_PER_DAY + 2 * 3600 {
+            -2 * 3600
+        } else {
+            -3 * 3600
+        }
+    }
+
+    #[test]
+    fn a_repeated_hour_at_midnight_still_gives_each_day_one_start() {
+        for day in [99, 100, 101] {
+            let start = day_start_with(&midnight_fall, day);
+            assert_eq!(day_of_with(&midnight_fall, start), day, "day {day}");
+            assert_eq!(day_of_with(&midnight_fall, start - 1), day - 1, "day {day}");
+        }
     }
 }

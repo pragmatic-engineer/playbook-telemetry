@@ -45,7 +45,12 @@ fn tool_list(out: &mut String, title: &str, counts: &[(String, u64)]) {
 }
 
 pub fn render(usage: &[UsageEvent], tools: &[ToolInvocationEvent]) -> String {
-    scoped(usage, tools, "across all recorded sessions")
+    scoped(
+        usage,
+        tools,
+        "across all recorded sessions",
+        crate::util::time::now_secs(),
+    )
 }
 
 /// The report for the events inside `range`, with its dates in the heading.
@@ -73,7 +78,7 @@ pub fn render_range(
             scope.replace("across all recorded sessions", "recorded")
         );
     }
-    let mut out = scoped(&usage, &tools, &scope);
+    let mut out = scoped(&usage, &tools, &scope, now);
     if let Some(period) = Period::of_range(range) {
         out.push_str(&comparison_text(&Comparison::of(all_usage, now, period)));
     }
@@ -132,7 +137,7 @@ fn comparison_text(c: &Comparison) -> String {
     out
 }
 
-fn scoped(usage: &[UsageEvent], tools: &[ToolInvocationEvent], scope: &str) -> String {
+fn scoped(usage: &[UsageEvent], tools: &[ToolInvocationEvent], scope: &str, now: i64) -> String {
     if usage.is_empty() && tools.is_empty() {
         return format!("{EMPTY_MESSAGE}\n");
     }
@@ -144,11 +149,7 @@ fn scoped(usage: &[UsageEvent], tools: &[ToolInvocationEvent], scope: &str) -> S
         usage.len(),
         total_cost
     );
-    let _ = writeln!(
-        out,
-        "Times and days are in {}.",
-        crate::tz::describe(crate::util::time::now_secs())
-    );
+    let _ = writeln!(out, "Times and days are in {}.", crate::tz::describe(now));
     let (unpriced, models) = unpriced_models(usage);
     if unpriced > 0 {
         let _ = writeln!(

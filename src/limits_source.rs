@@ -344,7 +344,7 @@ pub fn summary_section(
     week: WeekStart,
 ) -> String {
     let limits = all_limits(snapshot, budgets, events, now, week);
-    let mut out = String::from("\nLimits and burn rate (UTC)\n");
+    let mut out = format!("\nLimits and burn rate ({})\n", crate::tz::label());
     if limits.is_empty() {
         out.push_str(&format!("  {UNKNOWN_HINT}\n"));
     }

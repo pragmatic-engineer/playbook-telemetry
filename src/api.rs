@@ -285,6 +285,9 @@ mod tests {
         let data = data_json(&usage, &[], 1788400000, Range::All);
 
         assert_eq!(data["generated_at"], 1788400000);
+        assert_eq!(data["time_zone"]["mode"], "utc");
+        assert_eq!(data["time_zone"]["offset_seconds"], 0);
+        assert_eq!(data["time_zone"]["label"], "UTC");
         assert_eq!(data["totals"]["messages"], 2);
         assert_eq!(data["totals"]["output_tokens"], 40);
         assert!((data["totals"]["cost_usd"].as_f64().unwrap() - 0.75).abs() < 1e-9);

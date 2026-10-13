@@ -22,8 +22,8 @@ pub enum Dimension {
 impl Dimension {
     pub fn label(self) -> &'static str {
         match self {
-            Dimension::Day => "day (UTC)",
-            Dimension::Week => "week (UTC, starting Monday)",
+            Dimension::Day => "day",
+            Dimension::Week => "week (starting Monday)",
             Dimension::Model => "model",
             Dimension::Repo => "repo",
             Dimension::Branch => "branch",

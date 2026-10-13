@@ -99,7 +99,7 @@ Settings are playbook's own, from the global tier of its config store (`~/.confi
 
 ## Use it as a library
 
-The crate `playbook-telemetry` (library `playbook_telemetry`, published from this repository) exposes the same code the binary runs. A program that embeds it implements the `host::Host` trait (config lookup, state folder, program name, repo layout, sessions panel data) and installs it once with `host::install` before calling `entry::run`. Without an installed host the standalone one described above is used.
+The crate `playbook-telemetry` (library `playbook_telemetry`, published from this repository) exposes the same code the binary runs. A program that embeds it implements the `host::Host` trait (config lookup, state folder, program name, repo layout, sessions panel data) and installs it once with `host::install` before calling `entry::run`. `entry::run` picks the time zone itself when `tz::init` has not run, so an embedder gets the same local-time default and the same `usage.timeZone` setting. Without an installed host the standalone one described above is used.
 
 ```toml
 playbook-telemetry = { git = "https://github.com/pragmatic-engineer/playbook-telemetry", tag = "v0.1.4", package = "playbook-telemetry" }

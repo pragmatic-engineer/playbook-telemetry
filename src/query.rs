@@ -62,8 +62,9 @@ pub fn weekday(day: i64) -> usize {
     (day + 3).rem_euclid(7) as usize
 }
 
-/// The date window both views show. Days are UTC, so there is no daylight
-/// saving: every day is exactly 86,400 seconds and a week is exactly 7 days.
+/// The date window both views show. Days are in the chosen time zone (`tz`), so
+/// with daylight saving a day can be 23 or 25 hours long; use `tz::day_start`
+/// for a day boundary, never `day * 86_400`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Range {
     Today,
@@ -404,7 +405,7 @@ impl Spend {
     }
 }
 
-/// One session's activity on one UTC day. A session that runs past midnight
+/// One session's activity on one day. A session that runs past midnight
 /// has a row for each day it was active.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionDay {

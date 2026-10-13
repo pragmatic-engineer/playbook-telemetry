@@ -328,7 +328,7 @@ fn refresh_status(app: &App, pal: &Palette, area_width: u16) -> (String, Style) 
     }
 }
 
-/// `Aug 31`, the UTC date of a day number without its year.
+/// `Aug 31`, the date of a day number without its year.
 fn month_name_day(day: i64) -> String {
     const MONTHS: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -360,7 +360,7 @@ fn range_label(data: &Data) -> String {
     }
 }
 
-/// `Aug 31`, the UTC date without its year.
+/// `Aug 31`, the date without its year.
 fn month_day(timestamp: i64) -> String {
     month_name_day(day_of(timestamp))
 }
@@ -375,7 +375,7 @@ fn date_span(span: TimeSpan) -> String {
     }
 }
 
-/// `12:00`, the UTC time of day the span reaches.
+/// `12:00`, the time of day the span reaches.
 fn reaches(span: TimeSpan) -> String {
     clock(span.end - 1)[..5].to_string()
 }
@@ -535,8 +535,10 @@ fn header_lines(d: &Data, pal: &Palette, room: usize) -> Vec<Line<'static>> {
 /// The time zone note in the header border. Weeks say which day they start on.
 fn zone_note(app: &App) -> String {
     match app.range {
-        Range::ThisWeek(w) | Range::LastWeek(w) => format!("UTC, weeks start {}", w.short()),
-        _ => "UTC".to_string(),
+        Range::ThisWeek(w) | Range::LastWeek(w) => {
+            format!("{}, weeks start {}", crate::tz::label(), w.short())
+        }
+        _ => crate::tz::label().to_string(),
     }
 }
 
